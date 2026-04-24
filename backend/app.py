@@ -183,12 +183,17 @@ def lambda_handler(event, context):
             if not message_id:
                 return cors_response(400, {'error': 'messageId is required'})
 
-            # Find the original message by MessageId using a fresh receive, then delete it
+            # Find the original message by MessageId using a fresh receive, then delete it.
+            # Long polling (WaitTimeSeconds > 0) queries all SQS servers, avoiding
+            # the random-subset sampling of short polling that can miss messages on
+            # busy queues.
+            poll_wait = int(os.environ.get('SQS_EDIT_POLL_WAIT_SECONDS', '20'))
+            max_attempts = int(os.environ.get('SQS_EDIT_MAX_ATTEMPTS', '5'))
             found = False
-            for _ in range(3):  # retry a few batches
+            for _ in range(max_attempts):
                 batch = sqs.receive_message(
                     QueueUrl=queue_url, MaxNumberOfMessages=10,
-                    WaitTimeSeconds=0, AttributeNames=['All'],
+                    WaitTimeSeconds=poll_wait, AttributeNames=['All'],
                 )
                 msgs = batch.get('Messages', [])
                 if not msgs:
