@@ -204,12 +204,11 @@ def lambda_handler(event, context):
                             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
                             found = True
                         except Exception as e:
-                            logger.error("Edit: failed to delete message: %s", e)
+                            logger.exception("Edit: failed to delete message: %s", e)
                             return cors_response(400, {'error': f'Failed to delete original message: {str(e)}'})
                         break
-                    else:
-                        # Return non-matching messages to the queue
-                        sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                    # Return non-matching messages to the queue
+                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
                 if found:
                     break
             if not found:
@@ -231,7 +230,7 @@ def lambda_handler(event, context):
             try:
                 result = sqs.send_message(**send_kwargs)
             except Exception as e:
-                logger.error("Edit partial failure: original deleted but new message send failed: %s", e)
+                logger.exception("Edit partial failure: original deleted but new message send failed")
                 return cors_response(500, {'error': f'Original message deleted but re-send failed: {str(e)}'})
 
             return cors_response(200, {'messageId': result['MessageId']})
@@ -373,12 +372,11 @@ def lambda_handler(event, context):
                         if msg['MessageId'] == message_id:
                             found_msg = msg
                             break
-                        else:
-                            sqs.change_message_visibility(
-                                QueueUrl=queue_url,
-                                ReceiptHandle=msg['ReceiptHandle'],
-                                VisibilityTimeout=0,
-                            )
+                        sqs.change_message_visibility(
+                            QueueUrl=queue_url,
+                            ReceiptHandle=msg['ReceiptHandle'],
+                            VisibilityTimeout=0,
+                        )
                     if found_msg:
                         break
 
