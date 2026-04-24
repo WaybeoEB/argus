@@ -200,6 +200,13 @@ def lambda_handler(event, context):
                     continue
                 for msg in msgs:
                     if msg['MessageId'] == message_id:
+                        original_attributes = msg.get('Attributes', {})
+                        # Validate FIFO requirements before deleting
+                        if queue_name.endswith('.fifo'):
+                            effective_group_id = body.get('messageGroupId') or original_attributes.get('MessageGroupId')
+                            if not effective_group_id:
+                                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                                return cors_response(400, {'error': 'messageGroupId is required for FIFO queues and was not found in the request or the original message'})
                         try:
                             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
                             found = True
@@ -218,6 +225,8 @@ def lambda_handler(event, context):
             send_kwargs = {'QueueUrl': queue_url, 'MessageBody': message_body}
             if body.get('messageGroupId'):
                 send_kwargs['MessageGroupId'] = body['messageGroupId']
+            elif queue_name.endswith('.fifo'):
+                send_kwargs['MessageGroupId'] = original_attributes.get('MessageGroupId', 'edit')
             if queue_name.endswith('.fifo'):
                 # Always generate a unique dedup ID for edits to avoid SQS 5-minute
                 # deduplication window silently dropping the edited message.
