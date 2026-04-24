@@ -194,6 +194,7 @@ def lambda_handler(event, context):
                 batch = sqs.receive_message(
                     QueueUrl=queue_url, MaxNumberOfMessages=10,
                     WaitTimeSeconds=poll_wait, AttributeNames=['All'],
+                    MessageAttributeNames=['All'],
                 )
                 msgs = batch.get('Messages', [])
                 if not msgs:
@@ -201,6 +202,7 @@ def lambda_handler(event, context):
                 for msg in msgs:
                     if msg['MessageId'] == message_id:
                         original_attributes = msg.get('Attributes', {})
+                        original_message_attributes = msg.get('MessageAttributes', {})
                         # Validate FIFO requirements before deleting
                         if queue_name.endswith('.fifo'):
                             effective_group_id = body.get('messageGroupId') or original_attributes.get('MessageGroupId')
@@ -223,6 +225,8 @@ def lambda_handler(event, context):
 
             # Send the new message
             send_kwargs = {'QueueUrl': queue_url, 'MessageBody': message_body}
+            if original_message_attributes:
+                send_kwargs['MessageAttributes'] = original_message_attributes
             if body.get('messageGroupId'):
                 send_kwargs['MessageGroupId'] = body['messageGroupId']
             elif queue_name.endswith('.fifo'):
@@ -283,7 +287,7 @@ def lambda_handler(event, context):
             move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
             empty_receives = 0
             while moved < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'])
+                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'], MessageAttributeNames=['All'])
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     empty_receives += 1
@@ -293,6 +297,9 @@ def lambda_handler(event, context):
                 empty_receives = 0
                 for msg in msgs:
                     send_kwargs = {'QueueUrl': source_url, 'MessageBody': msg['Body']}
+                    msg_msg_attrs = msg.get('MessageAttributes', {})
+                    if msg_msg_attrs:
+                        send_kwargs['MessageAttributes'] = msg_msg_attrs
                     if is_fifo:
                         send_kwargs['MessageGroupId'] = msg.get('Attributes', {}).get('MessageGroupId', 'redrive')
                         send_kwargs['MessageDeduplicationId'] = msg['MessageId'] + '-redrive'
@@ -379,6 +386,7 @@ def lambda_handler(event, context):
                     batch = sqs.receive_message(
                         QueueUrl=queue_url, MaxNumberOfMessages=10,
                         WaitTimeSeconds=poll_wait, AttributeNames=['All'],
+                        MessageAttributeNames=['All'],
                     )
                     msgs = batch.get('Messages', [])
                     if not msgs:
@@ -405,11 +413,28 @@ def lambda_handler(event, context):
                 fresh_receipt = found_msg['ReceiptHandle']
 
                 send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg_body}
+                msg_message_attributes = found_msg.get('MessageAttributes', {})
+                if msg_message_attributes:
+                    send_kwargs['MessageAttributes'] = msg_message_attributes
                 if is_target_fifo:
                     send_kwargs['MessageGroupId'] = msg_attributes.get('MessageGroupId', 'move')
                     send_kwargs['MessageDeduplicationId'] = found_msg['MessageId'] + '-move'
 
-                sqs.send_message(**send_kwargs)
+                try:
+                    sqs.send_message(**send_kwargs)
+                except Exception as e:
+                    logger.error("Move: failed to send message to target queue: %s", e)
+                    try:
+                        sqs.change_message_visibility(
+                            QueueUrl=queue_url,
+                            ReceiptHandle=fresh_receipt,
+                            VisibilityTimeout=0,
+                        )
+                    except Exception as vis_err:
+                        logger.error("Move: failed to restore source message visibility: %s", vis_err)
+                    return cors_response(500, {
+                        'error': f'Failed to send message to target queue: {str(e)}',
+                    })
 
                 try:
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=fresh_receipt)
@@ -425,7 +450,7 @@ def lambda_handler(event, context):
             move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
             empty_receives = 0
             while moved < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'])
+                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'], MessageAttributeNames=['All'])
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     empty_receives += 1
@@ -435,6 +460,9 @@ def lambda_handler(event, context):
                 empty_receives = 0
                 for msg in msgs:
                     send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg['Body']}
+                    msg_msg_attrs = msg.get('MessageAttributes', {})
+                    if msg_msg_attrs:
+                        send_kwargs['MessageAttributes'] = msg_msg_attrs
                     if is_target_fifo:
                         send_kwargs['MessageGroupId'] = msg.get('Attributes', {}).get('MessageGroupId', 'move')
                         send_kwargs['MessageDeduplicationId'] = msg['MessageId'] + '-move'
