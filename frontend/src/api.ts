@@ -1,4 +1,4 @@
-import { getIdToken, authEnabled } from './auth'
+import {authEnabled, getIdToken} from './auth'
 
 const BASE = import.meta.env.VITE_API_URL || '/api'
 
@@ -41,6 +41,6 @@ export const api = {
     request(`/queues/${name}/export`, { method: 'POST', body: JSON.stringify({ maxMessages }) }),
   importMessages: (name: string, messages: any[]) =>
     request(`/queues/${name}/import`, { method: 'POST', body: JSON.stringify({ messages }) }),
-  moveMessages: (name: string, targetQueue: string, maxMessages = 100) =>
-    request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages }) }),
+  moveMessages: (name: string, targetQueue: string, maxMessages = 100, receiptHandle?: string, body?: string, attributes?: any) =>
+    request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages, receiptHandle, body, attributes }) }),
 }

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { api } from './api'
+import {useCallback, useEffect, useState} from 'react'
+import {api} from './api'
 import Dashboard from './Dashboard'
 import ConfirmModal from './ConfirmModal'
 
@@ -16,6 +16,14 @@ interface Message {
   Body: string
   ReceiptHandle: string
   Attributes?: Record<string, string>
+  MD5OfBody?: string
+}
+
+interface EditMsgState {
+  original: Message
+  body: string
+  groupId?: string
+  dedupId?: string
 }
 
 interface ConfirmState {
@@ -36,6 +44,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [newQueueName, setNewQueueName] = useState('')
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [msgBody, setMsgBody] = useState('')
   const [msgGroupId, setMsgGroupId] = useState('')
   const [msgDedup, setMsgDedup] = useState('')
@@ -45,6 +54,8 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   const [moveTarget, setMoveTarget] = useState('')
   const [filterText, setFilterText] = useState('')
   const [confirmModal, setConfirmModal] = useState<ConfirmState | null>(null)
+  const [editMsgModal, setEditMsgModal] = useState<EditMsgState | null>(null)
+  const [moveMsgState, setMoveMsgState] = useState<{ msg: Message, targetQueue: string } | null>(null)
 
   const showSuccess = (msg: string) => { setSuccess(msg); setTimeout(() => setSuccess(''), 4000) }
 
@@ -52,7 +63,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     try {
       const data = await api.listQueues(1, 1000)
       setQueues(data.queues); setError('')
-    } catch (e: any) { setError(e.message) }
+    } catch (e: any) {
+      setError(e.message)
+    }
   }, [])
 
   useEffect(() => { loadQueues() }, [loadQueues])
@@ -66,15 +79,31 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     })
   }
 
-  const selectQueueByName = (name: string) => {
-    const q = queues.find(q => q.name === name)
-    if (q) selectQueue(q)
+  const handleSelectQueue = (q: Queue) => {
+    selectQueue(q)
   }
 
   const handleCreate = async () => {
-    if (!newQueueName) return
-    try { await api.createQueue(newQueueName); setNewQueueName(''); await loadQueues() }
-    catch (e: any) { setError(e.message) }
+    if (!newQueueName) {
+      setError('Queue name is required')
+      return
+    }
+    setError('')
+    try {
+      await api.createQueue(newQueueName);
+      showSuccess(`Queue "${newQueueName}" created successfully`)
+      setNewQueueName('');
+      setIsCreateModalOpen(false);
+      await loadQueues()
+    }
+    catch (e: any) {
+      setError(e.message)
+    }
+  }
+
+  const openCreateModal = () => {
+    setIsCreateModalOpen(true)
+    setNewQueueName('')
   }
 
   const handleDelete = async (name: string) => {
@@ -142,6 +171,28 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     try {
       await api.deleteMessage(selected.name, receiptHandle)
       setMessages(prev => prev.filter(m => m.ReceiptHandle !== receiptHandle))
+      await loadQueues()
+    } catch (e: any) { setError(e.message) }
+  }
+
+  const handleEditMsg = async () => {
+    if (!selected || !editMsgModal) return
+    const { original, body, groupId, dedupId } = editMsgModal
+    try {
+      // 1. Send new message
+      const opts: any = {}
+      if (isFifo) {
+        if (groupId) opts.messageGroupId = groupId
+        if (dedupId) opts.messageDeduplicationId = dedupId
+      }
+      await api.sendMessage(selected.name, body, opts)
+
+      // 2. Delete old message
+      await api.deleteMessage(selected.name, original.ReceiptHandle)
+
+      setEditMsgModal(null)
+      showSuccess('Message updated (re-sent and old deleted)')
+      await handleReceive() // refresh messages
       await loadQueues()
     } catch (e: any) { setError(e.message) }
   }
@@ -225,6 +276,18 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     })
   }
 
+  const handleMoveSingle = async () => {
+    if (!selected || !moveMsgState || !moveMsgState.targetQueue) return
+    const { msg, targetQueue } = moveMsgState
+    try {
+      const r = await api.moveMessages(selected.name, targetQueue, 1, msg.ReceiptHandle, msg.Body, msg.Attributes)
+      setMoveMsgState(null)
+      setMessages(prev => prev.filter(m => m.ReceiptHandle !== msg.ReceiptHandle))
+      await loadQueues()
+      showSuccess(`Message moved to "${targetQueue}"`)
+    } catch (e: any) { setError(e.message) }
+  }
+
   const isFifo = selected?.attributes.FifoQueue === 'true'
   const filteredMessages = filterText
     ? messages.filter(m => m.Body.toLowerCase().includes(filterText.toLowerCase()) || m.MessageId.toLowerCase().includes(filterText.toLowerCase()))
@@ -236,11 +299,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
         <h2>SQS Admin</h2>
         <button className={`btn sidebar-nav ${view === 'dashboard' ? 'active-nav' : ''}`}
           onClick={() => { setView('dashboard'); setSelected(null) }}>📊 Dashboard</button>
-        <div className="create-form">
-          <input value={newQueueName} onChange={e => setNewQueueName(e.target.value)}
-            placeholder="queue-name (or .fifo)" onKeyDown={e => e.key === 'Enter' && handleCreate()} />
-          <button className="btn primary" onClick={handleCreate}>Create</button>
-        </div>
+        <button className="btn sidebar-nav" onClick={openCreateModal}>➕ Create Queue</button>
         <ul className="queue-list">
           {queues.map(q => (
             <li key={q.name} className={selected?.name === q.name ? 'active' : ''} onClick={() => selectQueue(q)}>
@@ -256,12 +315,91 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
         {onLogout && <button className="btn danger" onClick={onLogout} style={{ width: '100%', marginTop: 8 }}>Logout</button>}
       </aside>
 
+      {isCreateModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsCreateModalOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>➕ Create New Queue</h3>
+            <p>Enter the name for the new SQS queue. Use <code>.fifo</code> suffix for FIFO queues.</p>
+            <div style={{ marginBottom: 16 }}>
+              <input 
+                className="filter-input"
+                value={newQueueName} 
+                onChange={e => setNewQueueName(e.target.value)}
+                placeholder="queue-name (or .fifo)" 
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && handleCreate()} 
+              />
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => { setIsCreateModalOpen(false); setError(''); }}>Cancel</button>
+              <button className="btn primary" onClick={handleCreate}>Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editMsgModal && (
+        <div className="modal-overlay" onClick={() => setEditMsgModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>✏️ Edit Message</h3>
+            <p>SQS messages cannot be modified in place. This will delete the current message and send a new one with the updated content.</p>
+            <div className="send-form">
+              <textarea 
+                value={editMsgModal.body} 
+                onChange={e => setEditMsgModal({ ...editMsgModal, body: e.target.value })} 
+                placeholder="Message body" 
+                rows={6} 
+              />
+              {isFifo && (
+                <div className="fifo-fields">
+                  <label>Group ID:
+                    <input value={editMsgModal.groupId || ''} onChange={e => setEditMsgModal({ ...editMsgModal, groupId: e.target.value })} />
+                  </label>
+                  <label>Deduplication ID:
+                    <input value={editMsgModal.dedupId || ''} onChange={e => setEditMsgModal({ ...editMsgModal, dedupId: e.target.value })} />
+                  </label>
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setEditMsgModal(null)}>Cancel</button>
+              <button className="btn primary" onClick={handleEditMsg}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {moveMsgState && (
+        <div className="modal-overlay" onClick={() => setMoveMsgState(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>🔀 Move Message</h3>
+            <p>Move this message to another queue. It will be deleted from the current queue.</p>
+            <div className="move-form" style={{ marginBottom: 16 }}>
+              <select 
+                value={moveMsgState.targetQueue} 
+                onChange={e => setMoveMsgState({ ...moveMsgState, targetQueue: e.target.value })}
+                className="filter-input"
+              >
+                <option value="">Select target queue...</option>
+                {queues.filter(q => q.name !== selected?.name).map(q => (
+                  <option key={q.name} value={q.name}>{q.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setMoveMsgState(null)}>Cancel</button>
+              <button className="btn warning" onClick={handleMoveSingle} disabled={!moveMsgState.targetQueue}>Move</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="content">
         {error && <div className="error">{error} <button onClick={() => setError('')}>✕</button></div>}
         {success && <div className="success">{success}</div>}
 
         {view === 'dashboard' ? (
-          <Dashboard onSelectQueue={selectQueueByName} />
+          <Dashboard onSelectQueue={handleSelectQueue} onCreateQueue={openCreateModal} />
         ) : !selected ? (
           <div className="empty">Select a queue or create one to get started.</div>
         ) : (
@@ -355,7 +493,18 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                           <td className="mono">{m.MessageId.slice(0, 12)}…</td>
                           <td className="mono">{m.Body.length > 100 ? m.Body.slice(0, 100) + '…' : m.Body}</td>
                           <td>{m.Attributes?.SentTimestamp ? new Date(Number(m.Attributes.SentTimestamp)).toLocaleString() : '-'}</td>
-                          <td><button className="btn danger small" onClick={() => handleDeleteMsg(m.ReceiptHandle)}>Delete</button></td>
+                          <td>
+                            <div className="btn-row">
+                              <button className="btn primary small" onClick={() => setEditMsgModal({
+                                original: m,
+                                body: m.Body,
+                                groupId: m.Attributes?.MessageGroupId,
+                                dedupId: m.Attributes?.MessageDeduplicationId
+                              })}>Edit</button>
+                              <button className="btn warning small" onClick={() => setMoveMsgState({ msg: m, targetQueue: '' })}>Move</button>
+                              <button className="btn danger small" onClick={() => handleDeleteMsg(m.ReceiptHandle)}>Delete</button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

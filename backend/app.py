@@ -1,13 +1,16 @@
 import json
 import os
 import re
+
 import boto3
+
 
 def get_sqs_client():
     endpoint = os.environ.get('SQS_ENDPOINT_URL')
+    region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
     if endpoint:
-        return boto3.client('sqs', endpoint_url=endpoint, region_name=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'))
-    return boto3.client('sqs')
+        return boto3.client('sqs', endpoint_url=endpoint, region_name=region)
+    return boto3.client('sqs', region_name=region)
 
 def _is_dlq_of(source_queue, target_arn):
     rp = source_queue['attributes'].get('RedrivePolicy')
@@ -70,7 +73,10 @@ def lambda_handler(event, context):
             ]
             queues = []
             for q in page_items:
-                attr = sqs.get_queue_attributes(QueueUrl=q['url'], AttributeNames=attrs_to_get).get('Attributes', {})
+                try:
+                    attr = sqs.get_queue_attributes(QueueUrl=q['url'], AttributeNames=attrs_to_get).get('Attributes', {})
+                except Exception:
+                    attr = {}
                 queues.append({'name': q['name'], 'url': q['url'], 'attributes': attr})
 
             # Enrich DLQ relationships within the page
@@ -165,11 +171,18 @@ def lambda_handler(event, context):
         if method == 'POST' and sub_path == '/redrive':
             max_msgs = int(body.get('maxMessages', 10))
             # Find source queues that use this DLQ
-            dlq_arn = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=['QueueArn'])['Attributes']['QueueArn']
+            try:
+                dlq_arn = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=['QueueArn'])['Attributes']['QueueArn']
+            except Exception as e:
+                return cors_response(403, {'error': f'Cannot get ARN for queue: {str(e)}'})
+
             all_urls = sqs.list_queues().get('QueueUrls', [])
             source_url = None
             for url in all_urls:
-                attrs = sqs.get_queue_attributes(QueueUrl=url, AttributeNames=['RedrivePolicy']).get('Attributes', {})
+                try:
+                    attrs = sqs.get_queue_attributes(QueueUrl=url, AttributeNames=['RedrivePolicy']).get('Attributes', {})
+                except Exception:
+                    continue
                 rp = attrs.get('RedrivePolicy')
                 if rp:
                     try:
@@ -182,8 +195,11 @@ def lambda_handler(event, context):
                 return cors_response(400, {'error': 'No source queue found for this DLQ'})
 
             # Check if source is FIFO
-            source_attrs = sqs.get_queue_attributes(QueueUrl=source_url, AttributeNames=['FifoQueue']).get('Attributes', {})
-            is_fifo = source_attrs.get('FifoQueue') == 'true'
+            try:
+                source_attrs = sqs.get_queue_attributes(QueueUrl=source_url, AttributeNames=['FifoQueue']).get('Attributes', {})
+                is_fifo = source_attrs.get('FifoQueue') == 'true'
+            except Exception:
+                is_fifo = source_url.endswith('.fifo')
 
             moved = 0
             while moved < max_msgs:
@@ -253,11 +269,46 @@ def lambda_handler(event, context):
         if method == 'POST' and sub_path == '/move':
             target_name = body.get('targetQueue')
             max_msgs = int(body.get('maxMessages', 100))
+            receipt_handle = body.get('receiptHandle')
+            
             if not target_name:
                 return cors_response(400, {'error': 'targetQueue is required'})
+            
             target_url = sqs.get_queue_url(QueueName=target_name)['QueueUrl']
-            target_attrs = sqs.get_queue_attributes(QueueUrl=target_url, AttributeNames=['FifoQueue']).get('Attributes', {})
-            is_target_fifo = target_attrs.get('FifoQueue') == 'true'
+            try:
+                target_attrs = sqs.get_queue_attributes(QueueUrl=target_url, AttributeNames=['FifoQueue']).get('Attributes', {})
+                is_target_fifo = target_attrs.get('FifoQueue') == 'true'
+            except Exception:
+                is_target_fifo = target_name.endswith('.fifo')
+
+            if receipt_handle:
+                # Move a single message
+                # We need the body to send it to the target
+                # SQS move is actually: receive (if we don't have body) -> send -> delete
+                # But here the frontend might not have provided the body, or we want to be safe.
+                # If receipt_handle is provided, we assume the message is already 'received' 
+                # but we need its body. The move operation usually happens on messages just peeked.
+                # However, SQS doesn't allow getting body by receipt handle alone without receiving.
+                # If the user clicks 'Move' on a message they just 'peeked', we should have the body.
+                
+                # Let's check if the body was provided too, to avoid an extra receive which might not work 
+                # if visibility timeout is short.
+                msg_body = body.get('body')
+                msg_attributes = body.get('attributes', {})
+                
+                if not msg_body:
+                    return cors_response(400, {'error': 'body is required when moving a single message'})
+
+                send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg_body}
+                if is_target_fifo:
+                    send_kwargs['MessageGroupId'] = msg_attributes.get('MessageGroupId', 'move')
+                    # Use a new dedup id or one from attributes
+                    send_kwargs['MessageDeduplicationId'] = msg_attributes.get('MessageDeduplicationId', f"{hash(msg_body)}-move")
+                
+                sqs.send_message(**send_kwargs)
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+                return cors_response(200, {'moved': 1, 'targetQueue': target_name})
+
             moved = 0
             while moved < max_msgs:
                 batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'])

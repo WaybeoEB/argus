@@ -4,3 +4,6 @@ dist/
 __pycache__/
 .vite/
 sqs0
+
+.env
+.idea

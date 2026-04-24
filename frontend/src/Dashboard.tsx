@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { api } from './api'
+import {useCallback, useEffect, useState} from 'react'
+import {api} from './api'
 import './Dashboard.css'
 
 interface Queue {
@@ -12,7 +12,7 @@ interface Queue {
 
 const PAGE_SIZE = 20
 
-export default function Dashboard({ onSelectQueue }: { onSelectQueue: (name: string) => void }) {
+export default function Dashboard({ onSelectQueue, onCreateQueue }: { onSelectQueue: (q: Queue) => void, onCreateQueue?: () => void }) {
   const [queues, setQueues] = useState<Queue[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -49,6 +49,7 @@ export default function Dashboard({ onSelectQueue }: { onSelectQueue: (name: str
       <div className="dash-header">
         <h2>📊 Dashboard</h2>
         <div className="dash-actions">
+          <button className="btn primary" onClick={onCreateQueue}>➕ Create Queue</button>
           <input className="dash-search" value={search} onChange={e => handleSearch(e.target.value)}
             placeholder="🔍 Search queues..." />
           <button className="btn" onClick={() => load()} disabled={loading}>{loading ? '...' : '↻ Refresh'}</button>
@@ -92,14 +93,17 @@ export default function Dashboard({ onSelectQueue }: { onSelectQueue: (name: str
             return (
               <tr key={q.name} className={q.isDeadLetterQueue ? 'dlq-row' : ''}>
                 <td>
-                  <button className="link-btn" onClick={() => onSelectQueue(q.name)}>{q.name}</button>
+                  <button className="link-btn" onClick={() => onSelectQueue(q)}>{q.name}</button>
                   {q.isDeadLetterQueue && <span className="badge badge-red">DLQ</span>}
                 </td>
                 <td>{isFifo ? <span className="badge badge-blue">FIFO</span> : 'Standard'}</td>
                 <td className={avail > 0 ? 'num highlight-blue' : 'num'}>{avail}</td>
                 <td className={inflight > 0 ? 'num highlight-orange' : 'num'}>{inflight}</td>
                 <td className={delayed > 0 ? 'num highlight-yellow' : 'num'}>{delayed}</td>
-                <td>{q.dlqName ? <button className="link-btn" onClick={() => onSelectQueue(q.dlqName!)}>{q.dlqName}</button> : '—'}</td>
+                <td>{q.dlqName ? <button className="link-btn" onClick={() => {
+                  const dlq = queues.find(x => x.name === q.dlqName)
+                  if (dlq) onSelectQueue(dlq)
+                }}>{q.dlqName}</button> : '—'}</td>
                 <td className="num">{retention}d</td>
                 <td className="num">{q.attributes.VisibilityTimeout || 30}s</td>
               </tr>
@@ -127,7 +131,7 @@ export default function Dashboard({ onSelectQueue }: { onSelectQueue: (name: str
                 const msgs = Number(dlq.attributes.ApproximateNumberOfMessages || 0)
                 return (
                   <tr key={dlq.name}>
-                    <td><button className="link-btn" onClick={() => onSelectQueue(dlq.name)}>{dlq.name}</button></td>
+                    <td><button className="link-btn" onClick={() => onSelectQueue(dlq)}>{dlq.name}</button></td>
                     <td className={msgs > 0 ? 'num highlight-red' : 'num'}>{msgs}</td>
                     <td>{sources.length > 0 ? sources.join(', ') : '—'}</td>
                   </tr>
