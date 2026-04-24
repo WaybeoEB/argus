@@ -81,14 +81,15 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
 
 
   const handleCreate = async () => {
-    if (!newQueueName) {
+    const trimmed = newQueueName.trim()
+    if (!trimmed) {
       setError('Queue name is required')
       return
     }
     setError('')
     try {
-      await api.createQueue(newQueueName);
-      showSuccess(`Queue "${newQueueName}" created successfully`)
+      await api.createQueue(trimmed);
+      showSuccess(`Queue "${trimmed}" created successfully`)
       setNewQueueName('');
       setIsCreateModalOpen(false);
       await loadQueues()
