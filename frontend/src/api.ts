@@ -43,6 +43,6 @@ export const api = {
     request(`/queues/${name}/export`, { method: 'POST', body: JSON.stringify({ maxMessages }) }),
   importMessages: (name: string, messages: any[]) =>
     request(`/queues/${name}/import`, { method: 'POST', body: JSON.stringify({ messages }) }),
-  moveMessages: (name: string, targetQueue: string, maxMessages = 100, receiptHandle?: string, body?: string, attributes?: any) =>
-    request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages, receiptHandle, body, attributes }) }),
+  moveMessages: (name: string, targetQueue: string, maxMessages = 100, messageId?: string) =>
+    request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages, messageId }) }),
 }

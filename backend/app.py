@@ -351,32 +351,61 @@ def lambda_handler(event, context):
             except Exception:
                 is_target_fifo = target_name.endswith('.fifo')
 
-            if receipt_handle:
-                # Move a single message
-                # We need the body to send it to the target
-                # SQS move is actually: receive (if we don't have body) -> send -> delete
-                # But here the frontend might not have provided the body, or we want to be safe.
-                # If receipt_handle is provided, we assume the message is already 'received' 
-                # but we need its body. The move operation usually happens on messages just peeked.
-                # However, SQS doesn't allow getting body by receipt handle alone without receiving.
-                # If the user clicks 'Move' on a message they just 'peeked', we should have the body.
-                
-                # Let's check if the body was provided too, to avoid an extra receive which might not work 
-                # if visibility timeout is short.
-                msg_body = body.get('body')
-                msg_attributes = body.get('attributes', {})
-                
-                if not msg_body:
-                    return cors_response(400, {'error': 'body is required when moving a single message'})
+            message_id = body.get('messageId')
+            if message_id:
+                # Move a single message using a fresh receive to avoid stale receipt handles.
+                # The peek endpoint (GET /messages) resets visibility immediately, so the
+                # receipt handle returned to the frontend is unreliable by the time the
+                # move request arrives.  Re-receive by MessageId to get a fresh handle,
+                # matching the pattern used by the edit (PUT /messages) endpoint.
+                poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
+                max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+                found_msg = None
+                for _ in range(max_attempts):
+                    batch = sqs.receive_message(
+                        QueueUrl=queue_url, MaxNumberOfMessages=10,
+                        WaitTimeSeconds=poll_wait, AttributeNames=['All'],
+                    )
+                    msgs = batch.get('Messages', [])
+                    if not msgs:
+                        break
+                    for msg in msgs:
+                        if msg['MessageId'] == message_id:
+                            found_msg = msg
+                            break
+                        else:
+                            sqs.change_message_visibility(
+                                QueueUrl=queue_url,
+                                ReceiptHandle=msg['ReceiptHandle'],
+                                VisibilityTimeout=0,
+                            )
+                    if found_msg:
+                        break
+
+                if not found_msg:
+                    return cors_response(409, {
+                        'error': 'Could not re-receive the message — it may have been consumed or is temporarily invisible',
+                    })
+
+                msg_body = found_msg['Body']
+                msg_attributes = found_msg.get('Attributes', {})
+                fresh_receipt = found_msg['ReceiptHandle']
 
                 send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg_body}
                 if is_target_fifo:
                     send_kwargs['MessageGroupId'] = msg_attributes.get('MessageGroupId', 'move')
-                    # Use a new dedup id or one from attributes
-                    send_kwargs['MessageDeduplicationId'] = msg_attributes.get('MessageDeduplicationId', f"{hash(msg_body)}-move")
-                
+                    send_kwargs['MessageDeduplicationId'] = found_msg['MessageId'] + '-move'
+
                 sqs.send_message(**send_kwargs)
-                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+
+                try:
+                    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=fresh_receipt)
+                except Exception as e:
+                    logger.error("Move: sent to target but failed to delete from source: %s", e)
+                    return cors_response(500, {
+                        'error': f'Message sent to target queue but deletion from source failed: {str(e)}',
+                    })
+
                 return cors_response(200, {'moved': 1, 'targetQueue': target_name})
 
             moved = 0

@@ -273,9 +273,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     if (!selected || !moveMsgState || !moveMsgState.targetQueue) return
     const { msg, targetQueue } = moveMsgState
     try {
-      const r = await api.moveMessages(selected.name, targetQueue, 1, msg.ReceiptHandle, msg.Body, msg.Attributes)
+      const r = await api.moveMessages(selected.name, targetQueue, 1, msg.MessageId)
       setMoveMsgState(null)
-      setMessages(prev => prev.filter(m => m.ReceiptHandle !== msg.ReceiptHandle))
+      setMessages(prev => prev.filter(m => m.MessageId !== msg.MessageId))
       await loadQueues()
       showSuccess(`Message moved to "${targetQueue}"`)
     } catch (e: any) { setError(e.message) }
