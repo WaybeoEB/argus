@@ -197,7 +197,7 @@ def lambda_handler(event, context):
                 )
                 msgs = batch.get('Messages', [])
                 if not msgs:
-                    break
+                    continue
                 for msg in msgs:
                     if msg['MessageId'] == message_id:
                         try:
@@ -271,11 +271,17 @@ def lambda_handler(event, context):
                 is_fifo = source_url.endswith('.fifo')
 
             moved = 0
+            move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+            empty_receives = 0
             while moved < max_msgs:
                 batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'])
                 msgs = batch.get('Messages', [])
                 if not msgs:
-                    break
+                    empty_receives += 1
+                    if empty_receives >= move_max_attempts:
+                        break
+                    continue
+                empty_receives = 0
                 for msg in msgs:
                     send_kwargs = {'QueueUrl': source_url, 'MessageBody': msg['Body']}
                     if is_fifo:
@@ -407,11 +413,17 @@ def lambda_handler(event, context):
                 return cors_response(200, {'moved': 1, 'targetQueue': target_name})
 
             moved = 0
+            move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+            empty_receives = 0
             while moved < max_msgs:
                 batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'])
                 msgs = batch.get('Messages', [])
                 if not msgs:
-                    break
+                    empty_receives += 1
+                    if empty_receives >= move_max_attempts:
+                        break
+                    continue
+                empty_receives = 0
                 for msg in msgs:
                     send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg['Body']}
                     if is_target_fifo:
