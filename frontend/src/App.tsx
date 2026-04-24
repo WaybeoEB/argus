@@ -79,9 +79,6 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     })
   }
 
-  const handleSelectQueue = (q: Queue) => {
-    selectQueue(q)
-  }
 
   const handleCreate = async () => {
     if (!newQueueName) {
@@ -179,19 +176,15 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     if (!selected || !editMsgModal) return
     const { original, body, groupId, dedupId } = editMsgModal
     try {
-      // 1. Send new message
       const opts: any = {}
       if (isFifo) {
         if (groupId) opts.messageGroupId = groupId
         if (dedupId) opts.messageDeduplicationId = dedupId
       }
-      await api.sendMessage(selected.name, body, opts)
-
-      // 2. Delete old message
-      await api.deleteMessage(selected.name, original.ReceiptHandle)
+      await api.editMessage(selected.name, body, original.MessageId, opts)
 
       setEditMsgModal(null)
-      showSuccess('Message updated (re-sent and old deleted)')
+      showSuccess('Message updated (old deleted and new sent)')
       await handleReceive() // refresh messages
       await loadQueues()
     } catch (e: any) { setError(e.message) }
@@ -399,7 +392,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
         {success && <div className="success">{success}</div>}
 
         {view === 'dashboard' ? (
-          <Dashboard onSelectQueue={handleSelectQueue} onCreateQueue={openCreateModal} />
+          <Dashboard onSelectQueue={selectQueue} onCreateQueue={openCreateModal} />
         ) : !selected ? (
           <div className="empty">Select a queue or create one to get started.</div>
         ) : (

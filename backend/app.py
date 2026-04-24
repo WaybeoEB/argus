@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import re
+import uuid
 
 import boto3
 
+logger = logging.getLogger(__name__)
 
 def get_sqs_client():
     endpoint = os.environ.get('SQS_ENDPOINT_URL')
@@ -75,7 +78,11 @@ def lambda_handler(event, context):
             for q in page_items:
                 try:
                     attr = sqs.get_queue_attributes(QueueUrl=q['url'], AttributeNames=attrs_to_get).get('Attributes', {})
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        "Failed to get queue attributes for %s (attrs=%s): %s",
+                        q['url'], attrs_to_get, e, exc_info=True,
+                    )
                     attr = {}
                 queues.append({'name': q['name'], 'url': q['url'], 'attributes': attr})
 
@@ -167,6 +174,63 @@ def lambda_handler(event, context):
             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=body['receiptHandle'])
             return cors_response(200, {'deleted': True})
 
+        # PUT /queues/{queueName}/messages — atomic edit (delete old + send new)
+        if method == 'PUT' and sub_path == '/messages':
+            message_body = body.get('messageBody')
+            message_id = body.get('messageId')
+            if not message_body:
+                return cors_response(400, {'error': 'messageBody is required'})
+            if not message_id:
+                return cors_response(400, {'error': 'messageId is required'})
+
+            # Find the original message by MessageId using a fresh receive, then delete it
+            found = False
+            for _ in range(3):  # retry a few batches
+                batch = sqs.receive_message(
+                    QueueUrl=queue_url, MaxNumberOfMessages=10,
+                    WaitTimeSeconds=0, AttributeNames=['All'],
+                )
+                msgs = batch.get('Messages', [])
+                if not msgs:
+                    break
+                for msg in msgs:
+                    if msg['MessageId'] == message_id:
+                        try:
+                            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                            found = True
+                        except Exception as e:
+                            logger.error("Edit: failed to delete message: %s", e)
+                            return cors_response(400, {'error': f'Failed to delete original message: {str(e)}'})
+                        break
+                    else:
+                        # Return non-matching messages to the queue
+                        sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                if found:
+                    break
+            if not found:
+                return cors_response(400, {'error': 'Could not find original message to delete — it may have already been consumed'})
+
+            # Send the new message
+            send_kwargs = {'QueueUrl': queue_url, 'MessageBody': message_body}
+            if body.get('messageGroupId'):
+                send_kwargs['MessageGroupId'] = body['messageGroupId']
+            if queue_name.endswith('.fifo'):
+                # Always generate a unique dedup ID for edits to avoid SQS 5-minute
+                # deduplication window silently dropping the edited message.
+                # Strip any previous -edit-* suffixes to prevent unbounded growth.
+                dedup = body.get('messageDeduplicationId', '')
+                dedup = re.sub(r'(-edit-[0-9a-f]+)+$', '', dedup)
+                send_kwargs['MessageDeduplicationId'] = f"{dedup}-edit-{uuid.uuid4().hex[:8]}" if dedup else uuid.uuid4().hex
+            elif body.get('messageDeduplicationId'):
+                send_kwargs['MessageDeduplicationId'] = body['messageDeduplicationId']
+            try:
+                result = sqs.send_message(**send_kwargs)
+            except Exception as e:
+                logger.error("Edit partial failure: original deleted but new message send failed: %s", e)
+                return cors_response(500, {'error': f'Original message deleted but re-send failed: {str(e)}'})
+
+            return cors_response(200, {'messageId': result['MessageId']})
+
         # POST /queues/{queueName}/redrive — move messages from DLQ back to source queue
         if method == 'POST' and sub_path == '/redrive':
             max_msgs = int(body.get('maxMessages', 10))
@@ -181,7 +245,8 @@ def lambda_handler(event, context):
             for url in all_urls:
                 try:
                     attrs = sqs.get_queue_attributes(QueueUrl=url, AttributeNames=['RedrivePolicy']).get('Attributes', {})
-                except Exception:
+                except Exception as e:
+                    logger.debug("Failed to get queue attributes for %s: %s", url, e)
                     continue
                 rp = attrs.get('RedrivePolicy')
                 if rp:

@@ -49,7 +49,7 @@ export default function Dashboard({ onSelectQueue, onCreateQueue }: { onSelectQu
       <div className="dash-header">
         <h2>📊 Dashboard</h2>
         <div className="dash-actions">
-          <button className="btn primary" onClick={onCreateQueue}>➕ Create Queue</button>
+          {onCreateQueue && <button className="btn primary" onClick={onCreateQueue}>➕ Create Queue</button>}
           <input className="dash-search" value={search} onChange={e => handleSearch(e.target.value)}
             placeholder="🔍 Search queues..." />
           <button className="btn" onClick={() => load()} disabled={loading}>{loading ? '...' : '↻ Refresh'}</button>

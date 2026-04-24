@@ -33,6 +33,8 @@ export const api = {
     request(`/queues/${name}/messages?maxMessages=${maxMessages}&waitTime=${waitTime}`),
   deleteMessage: (name: string, receiptHandle: string) =>
     request(`/queues/${name}/messages`, { method: 'DELETE', body: JSON.stringify({ receiptHandle }) }),
+  editMessage: (name: string, messageBody: string, messageId: string, opts?: { messageGroupId?: string; messageDeduplicationId?: string }) =>
+    request(`/queues/${name}/messages`, { method: 'PUT', body: JSON.stringify({ messageBody, messageId, ...opts }) }),
   redriveMessages: (name: string, maxMessages = 10) =>
     request(`/queues/${name}/redrive`, { method: 'POST', body: JSON.stringify({ maxMessages }) }),
   sendBatch: (name: string, messages: any[]) =>
