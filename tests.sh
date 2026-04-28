@@ -74,6 +74,41 @@ t "Move to target"             "curl -sf -X POST $API/queues/t-std/move -H 'Cont
 t "Target has messages"        "curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-target'][0];assert int(q['attributes']['ApproximateNumberOfMessages'])>0\""
 
 echo ""
+echo "--- Edit Message ---"
+# Send a message to edit
+EDIT_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"before-edit"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+if [ -n "$EDIT_ID" ]; then
+  sleep 1
+  t "Edit message body"          "curl -sf -X PUT $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"after-edit\",\"messageId\":\"$EDIT_ID\"}' | grep -q messageId"
+  t "Edited body visible"        "curl -sf '$API/queues/t-std/messages?maxMessages=10' | grep -q after-edit"
+else
+  echo "  ⚠️  Skip edit (no messageId)"; FAIL=$((FAIL+1))
+fi
+t "Edit missing body → 400"    "curl -s -o /dev/null -w '%{http_code}' -X PUT $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"x\"}' | grep -q 400"
+t "Edit missing msgId → 400"   "curl -s -o /dev/null -w '%{http_code}' -X PUT $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"x\"}' | grep -q 400"
+
+# FIFO edit
+FIFO_EDIT_ID=$(curl -sf -X POST "$API/queues/t-fifo.fifo/messages" -H 'Content-Type: application/json' -d '{"messageBody":"fifo-before","messageGroupId":"g2","messageDeduplicationId":"dedup-edit-1"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+if [ -n "$FIFO_EDIT_ID" ]; then
+  sleep 1
+  t "FIFO edit with groupId"     "curl -sf -X PUT $API/queues/t-fifo.fifo/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"fifo-after\",\"messageId\":\"$FIFO_EDIT_ID\",\"messageGroupId\":\"g2\",\"messageDeduplicationId\":\"dedup-edit-1\"}' | grep -q messageId"
+else
+  echo "  ⚠️  Skip FIFO edit (no messageId)"; FAIL=$((FAIL+1))
+fi
+
+echo ""
+echo "--- Move Single by messageId ---"
+MOVE_MSG_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"move-me-single"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+if [ -n "$MOVE_MSG_ID" ]; then
+  sleep 1
+  t "Move single by messageId"  "curl -sf -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{\"targetQueue\":\"t-target\",\"messageId\":\"$MOVE_MSG_ID\"}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']==1\""
+  t "Move target=t-target"      "curl -sf -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{\"targetQueue\":\"t-target\",\"messageId\":\"$MOVE_MSG_ID\"}' 2>/dev/null; curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-target'][0];assert int(q['attributes']['ApproximateNumberOfMessages'])>0\" 2>/dev/null"
+else
+  echo "  ⚠️  Skip move-single (no messageId)"; FAIL=$((FAIL+1))
+fi
+t "Move missing target → 400"  "curl -s -o /dev/null -w '%{http_code}' -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{}' | grep -q 400"
+
+echo ""
 echo "--- DLQ & Redrive ---"
 curl -sf -X POST "$API/queues" -H 'Content-Type: application/json' -d '{"name":"t-dlq"}' > /dev/null 2>&1 || true
 DLQ_ARN=$(curl -sf "$API/queues" 2>/dev/null | python3 -c "import sys,json;print([q['attributes']['QueueArn'] for q in json.load(sys.stdin)['queues'] if q['name']=='t-dlq'][0])" 2>/dev/null || echo "")
