@@ -287,9 +287,10 @@ def lambda_handler(event, context):
 
             moved = 0
             move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
             empty_receives = 0
             while moved < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'], MessageAttributeNames=['All'])
+                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=poll_wait, AttributeNames=['All'], MessageAttributeNames=['All'])
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     empty_receives += 1
@@ -455,9 +456,10 @@ def lambda_handler(event, context):
 
             moved = 0
             move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
             empty_receives = 0
             while moved < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=0, AttributeNames=['All'], MessageAttributeNames=['All'])
+                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=poll_wait, AttributeNames=['All'], MessageAttributeNames=['All'])
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     empty_receives += 1
