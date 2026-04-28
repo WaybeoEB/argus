@@ -149,6 +149,8 @@ def lambda_handler(event, context):
             if body.get('messageGroupId'):
                 kwargs['MessageGroupId'] = body['messageGroupId']
             if body.get('messageDeduplicationId'):
+                if not queue_name.endswith('.fifo'):
+                    return cors_response(400, {'error': 'messageDeduplicationId is only supported for FIFO queues'})
                 kwargs['MessageDeduplicationId'] = body['messageDeduplicationId']
             if body.get('delaySeconds') is not None:
                 kwargs['DelaySeconds'] = int(body['delaySeconds'])
@@ -187,8 +189,8 @@ def lambda_handler(event, context):
             # Long polling (WaitTimeSeconds > 0) queries all SQS servers, avoiding
             # the random-subset sampling of short polling that can miss messages on
             # busy queues.
-            poll_wait = int(os.environ.get('SQS_EDIT_POLL_WAIT_SECONDS', '20'))
-            max_attempts = int(os.environ.get('SQS_EDIT_MAX_ATTEMPTS', '5'))
+            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
+            max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
             found = False
             for _ in range(max_attempts):
                 batch = sqs.receive_message(
@@ -240,8 +242,8 @@ def lambda_handler(event, context):
                 dedup = body.get('messageDeduplicationId', '')
                 dedup = re.sub(r'(-edit-[0-9a-f]+)+$', '', dedup)
                 send_kwargs['MessageDeduplicationId'] = f"{dedup}-edit-{uuid.uuid4().hex[:8]}" if dedup else uuid.uuid4().hex
-            elif body.get('messageDeduplicationId'):
-                send_kwargs['MessageDeduplicationId'] = body['messageDeduplicationId']
+            # messageDeduplicationId is intentionally NOT sent for standard queues;
+            # SQS rejects it with InvalidParameterValue and the original is already deleted.
             try:
                 result = sqs.send_message(**send_kwargs)
             except Exception as e:

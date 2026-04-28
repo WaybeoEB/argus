@@ -20,12 +20,13 @@ services:
     ports:
       - '3001:3001'
     environment:
-      # Leave SQS_ENDPOINT_URL empty to talk to real AWS SQS.
-      # Set it to http://localstack:4566 (see .env.example, Mode B) to use LocalStack.
+      # Default mode: real AWS.  All vars blank → boto3 uses its normal credential chain.
+      # For LocalStack: set SQS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, and
+      # AWS_SECRET_ACCESS_KEY in your .env (see .env.example, Mode B).
       # IMPORTANT: do NOT put a queue URL here — only the service endpoint.
       - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
 
