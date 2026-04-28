@@ -11,10 +11,12 @@ Painel web de administração do Amazon SQS — 100% serverless.
 - 📨 Enviar mensagens (com suporte a FIFO group/dedup ID e delay)
 - 📦 Envio em batch (JSON array)
 - 👁️ Peek de mensagens (visualizar sem remover da fila)
+- ✏️ Editar o corpo da mensagem in place (peek-and-edit atômico, preserva atributos)
 - 🔍 Filtro de mensagens por conteúdo
 - ❌ Deletar mensagens individuais
 - 🔄 Redrive de DLQ (reprocessar mensagens que falharam)
-- 🔀 Mover mensagens entre filas
+- 🔀 Mover mensagens entre filas (por `messageId`, com `MessageAttributes` preservados)
+- ⏱️ Long polling com retries configuráveis para fetch confiável
 - 📤 Export / Import de mensagens (JSON)
 - 📊 Dashboard com KPIs e visão geral de todas as filas
 - 🔐 Autenticação via Cognito (no deploy AWS)
@@ -32,7 +34,36 @@ Painel web de administração do Amazon SQS — 100% serverless.
 
 - Docker
 
-### Subir o ambiente (um único comando)
+### Configurar o ambiente
+
+Copie o arquivo de exemplo e escolha um modo:
+
+```bash
+cp .env.example .env
+```
+
+`.env.example` documenta dois modos:
+
+- **Modo A — AWS SQS real**: deixe `SQS_ENDPOINT_URL` vazio e preencha
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` (opcional,
+  para SSO / role assumida) e `AWS_DEFAULT_REGION`. O backend conversa
+  diretamente com a AWS.
+- **Modo B — LocalStack** (desenvolvimento local padrão): defina
+  `SQS_ENDPOINT_URL=http://localstack:4566` e use as credenciais dummy `test`.
+
+> ⚠️ `SQS_ENDPOINT_URL` deve ser apenas o endpoint do serviço — nunca a URL
+> de uma fila. Colocar a URL de uma fila causa
+> `InvalidAction ... ListQueues is not valid for this endpoint`.
+
+### Subir o ambiente
+
+Modo A (AWS SQS real) — sobe apenas backend e frontend:
+
+```bash
+docker compose up --build -d backend frontend
+```
+
+Modo B (LocalStack) — sobe os três serviços:
 
 ```bash
 docker compose up --build
@@ -40,8 +71,8 @@ docker compose up --build
 
 Acesse `http://localhost:5173`. Pronto.
 
-Os 3 serviços sobem juntos:
-- **localstack** (porta 4566) — SQS emulado
+Serviços:
+- **localstack** (porta 4566) — SQS emulado (somente Modo B)
 - **backend** (porta 3001) — API Python que invoca o mesmo handler da Lambda
 - **frontend** (porta 5173) — Vite dev server com proxy para o backend
 
@@ -140,7 +171,9 @@ sqs_admin_painel/
 ├── samconfig.toml
 ├── docker-compose.yml      # Ambiente local (LocalStack + Backend + Frontend + Tests)
 ├── deploy.sh               # Script de deploy one-click
+├── destroy.sh              # Script de tear-down
 ├── tests.sh                # Testes de integração
+├── .env.example            # Template de env local (Modo A: AWS real / Modo B: LocalStack)
 ├── .gitignore
 └── README.md
 ```
@@ -154,6 +187,19 @@ sqs_admin_painel/
 | `VITE_COGNITO_CLIENT_ID` | Cognito App Client ID | Sim (deploy) |
 
 > Quando as variáveis do Cognito não estão definidas, a autenticação é desabilitada (modo local).
+
+## Variáveis de Ambiente (Backend / Local)
+
+Carregadas automaticamente pelo `docker compose` a partir do `.env` na raiz
+do projeto. Veja `.env.example` para o template completo.
+
+| Variável | Descrição | Default |
+|---|---|---|
+| `SQS_ENDPOINT_URL` | Endpoint do serviço SQS. Vazio = AWS real; `http://localstack:4566` = LocalStack. **Nunca a URL de uma fila.** | _(vazio)_ |
+| `AWS_ACCESS_KEY_ID` | AWS access key | `test` |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key | `test` |
+| `AWS_SESSION_TOKEN` | Session token (apenas para SSO / credenciais temporárias) | _(vazio)_ |
+| `AWS_DEFAULT_REGION` | Região AWS onde estão as filas | `us-east-1` |
 
 ## Segurança
 

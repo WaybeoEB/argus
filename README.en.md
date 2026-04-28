@@ -11,10 +11,12 @@ Web administration panel for Amazon SQS — 100% serverless.
 - 📨 Send messages (with FIFO group/dedup ID and delay support)
 - 📦 Batch send (JSON array)
 - 👁️ Peek messages (view without removing from queue)
+- ✏️ Edit message body in place (atomic peek-and-edit, preserves attributes)
 - 🔍 Filter messages by content
 - ❌ Delete individual messages
 - 🔄 DLQ redrive (reprocess failed messages)
-- 🔀 Move messages between queues
+- 🔀 Move messages between queues (by `messageId`, with `MessageAttributes` preserved)
+- ⏱️ Long polling with configurable retries for reliable message fetching
 - 📤 Export / Import messages (JSON)
 - 📊 Dashboard with KPIs and overview of all queues
 - 🔐 Cognito authentication (on AWS deploy)
@@ -32,7 +34,37 @@ Web administration panel for Amazon SQS — 100% serverless.
 
 - Docker
 
-### Start the environment (single command)
+### Configure the environment
+
+Copy the example env file and choose a mode:
+
+```bash
+cp .env.example .env
+```
+
+`.env.example` documents two modes:
+
+- **Mode A — Real AWS SQS**: leave `SQS_ENDPOINT_URL` empty and fill in your
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN`
+  (for SSO / assumed roles), and `AWS_DEFAULT_REGION`. The backend talks
+  directly to AWS.
+- **Mode B — LocalStack** (default local development): set
+  `SQS_ENDPOINT_URL=http://localstack:4566` and use the dummy `test`
+  credentials.
+
+> ⚠️ `SQS_ENDPOINT_URL` must be the service endpoint only — never a queue URL.
+> Putting a queue URL there triggers `InvalidAction ... ListQueues is not valid
+> for this endpoint`.
+
+### Start the environment
+
+Mode A (real AWS SQS) — run only the backend and frontend:
+
+```bash
+docker compose up --build -d backend frontend
+```
+
+Mode B (LocalStack) — run all three services:
 
 ```bash
 docker compose up --build
@@ -40,8 +72,8 @@ docker compose up --build
 
 Open `http://localhost:5173`. Done.
 
-Three services start together:
-- **localstack** (port 4566) — emulated SQS
+Services:
+- **localstack** (port 4566) — emulated SQS (Mode B only)
 - **backend** (port 3001) — Python API that invokes the same Lambda handler
 - **frontend** (port 5173) — Vite dev server with proxy to the backend
 
@@ -140,7 +172,9 @@ sqs_admin_painel/
 ├── samconfig.toml
 ├── docker-compose.yml      # Local environment (LocalStack + Backend + Frontend + Tests)
 ├── deploy.sh               # One-click deploy script
+├── destroy.sh              # Tear-down script
 ├── tests.sh                # Integration tests
+├── .env.example            # Local env template (Mode A: real AWS / Mode B: LocalStack)
 ├── .gitignore
 └── README.md
 ```
@@ -154,6 +188,19 @@ sqs_admin_painel/
 | `VITE_COGNITO_CLIENT_ID` | Cognito App Client ID | Yes (deploy) |
 
 > When Cognito variables are not set, authentication is disabled (local mode).
+
+## Environment Variables (Backend / Local)
+
+Loaded automatically by `docker compose` from `.env` at the project root.
+See `.env.example` for the full template.
+
+| Variable | Description | Default |
+|---|---|---|
+| `SQS_ENDPOINT_URL` | SQS service endpoint. Empty = real AWS; `http://localstack:4566` = LocalStack. **Never a queue URL.** | _(empty)_ |
+| `AWS_ACCESS_KEY_ID` | AWS access key | `test` |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key | `test` |
+| `AWS_SESSION_TOKEN` | Session token (only for SSO / temporary credentials) | _(empty)_ |
+| `AWS_DEFAULT_REGION` | AWS region where the queues live | `us-east-1` |
 
 ## Security
 
