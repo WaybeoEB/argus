@@ -207,7 +207,9 @@ def lambda_handler(event, context):
                         if queue_name.endswith('.fifo'):
                             effective_group_id = body.get('messageGroupId') or original_attributes.get('MessageGroupId')
                             if not effective_group_id:
-                                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                                # Reset visibility for ALL messages in the batch (including this one)
+                                for reset_msg in msgs:
+                                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=reset_msg['ReceiptHandle'], VisibilityTimeout=0)
                                 return cors_response(400, {'error': 'messageGroupId is required for FIFO queues and was not found in the request or the original message'})
                         try:
                             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
@@ -215,9 +217,9 @@ def lambda_handler(event, context):
                         except Exception as e:
                             logger.exception("Edit: failed to delete message: %s", e)
                             return cors_response(400, {'error': f'Failed to delete original message: {str(e)}'})
-                        break
-                    # Return non-matching messages to the queue
-                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                    else:
+                        # Return non-matching messages to the queue
+                        sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
                 if found:
                     break
             if not found:
@@ -382,6 +384,7 @@ def lambda_handler(event, context):
                 poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
                 max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
                 found_msg = None
+                empty_receives = 0
                 for _ in range(max_attempts):
                     batch = sqs.receive_message(
                         QueueUrl=queue_url, MaxNumberOfMessages=10,
@@ -390,16 +393,20 @@ def lambda_handler(event, context):
                     )
                     msgs = batch.get('Messages', [])
                     if not msgs:
-                        break
+                        empty_receives += 1
+                        if empty_receives >= max_attempts:
+                            break
+                        continue
+                    empty_receives = 0
                     for msg in msgs:
                         if msg['MessageId'] == message_id:
                             found_msg = msg
-                            break
-                        sqs.change_message_visibility(
-                            QueueUrl=queue_url,
-                            ReceiptHandle=msg['ReceiptHandle'],
-                            VisibilityTimeout=0,
-                        )
+                        else:
+                            sqs.change_message_visibility(
+                                QueueUrl=queue_url,
+                                ReceiptHandle=msg['ReceiptHandle'],
+                                VisibilityTimeout=0,
+                            )
                     if found_msg:
                         break
 

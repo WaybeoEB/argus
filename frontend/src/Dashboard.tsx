@@ -19,6 +19,24 @@ export default function Dashboard({ onSelectQueue, onCreateQueue }: { onSelectQu
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [dlqLoading, setDlqLoading] = useState<Record<string, boolean>>({})
+  const [dlqError, setDlqError] = useState<Record<string, string>>({})
+
+  const handleDlqClick = async (dlqName: string) => {
+    const local = queues.find(x => x.name === dlqName)
+    if (local) { onSelectQueue(local); return }
+    setDlqLoading(prev => ({ ...prev, [dlqName]: true }))
+    setDlqError(prev => { const n = { ...prev }; delete n[dlqName]; return n })
+    try {
+      const found = await api.getQueueByName(dlqName)
+      if (found) { onSelectQueue(found) }
+      else { setDlqError(prev => ({ ...prev, [dlqName]: 'DLQ not found' })) }
+    } catch (e: any) {
+      setDlqError(prev => ({ ...prev, [dlqName]: e.message || 'Failed to fetch DLQ' }))
+    } finally {
+      setDlqLoading(prev => ({ ...prev, [dlqName]: false }))
+    }
+  }
 
   const load = useCallback(async (p = page, s = search) => {
     setLoading(true)
@@ -100,10 +118,10 @@ export default function Dashboard({ onSelectQueue, onCreateQueue }: { onSelectQu
                 <td className={avail > 0 ? 'num highlight-blue' : 'num'}>{avail}</td>
                 <td className={inflight > 0 ? 'num highlight-orange' : 'num'}>{inflight}</td>
                 <td className={delayed > 0 ? 'num highlight-yellow' : 'num'}>{delayed}</td>
-                <td>{q.dlqName ? <button className="link-btn" onClick={() => {
-                  const dlq = queues.find(x => x.name === q.dlqName)
-                  if (dlq) onSelectQueue(dlq)
-                }}>{q.dlqName}</button> : '—'}</td>
+                <td>{q.dlqName ? <>
+                  <button className="link-btn" disabled={dlqLoading[q.dlqName]} onClick={() => handleDlqClick(q.dlqName!)}>{dlqLoading[q.dlqName] ? '⏳' : ''}{q.dlqName}</button>
+                  {dlqError[q.dlqName] && <span className="badge badge-red" title={dlqError[q.dlqName]}>⚠</span>}
+                </> : '—'}</td>
                 <td className="num">{retention}d</td>
                 <td className="num">{q.attributes.VisibilityTimeout || 30}s</td>
               </tr>

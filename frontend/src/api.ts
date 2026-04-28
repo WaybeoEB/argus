@@ -45,4 +45,9 @@ export const api = {
     request(`/queues/${name}/import`, { method: 'POST', body: JSON.stringify({ messages }) }),
   moveMessages: (name: string, targetQueue: string, maxMessages = 100, messageId?: string) =>
     request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages, messageId }) }),
+  getQueueByName: async (name: string) => {
+    const data = await request(`/queues?page=1&pageSize=50&search=${encodeURIComponent(name)}`)
+    const match = data?.queues?.find((q: any) => q.name === name)
+    return match || null
+  },
 }

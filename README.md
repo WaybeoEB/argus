@@ -11,7 +11,7 @@ Painel web de administração do Amazon SQS — 100% serverless.
 - 📨 Enviar mensagens (com suporte a FIFO group/dedup ID e delay)
 - 📦 Envio em batch (JSON array)
 - 👁️ Peek de mensagens (visualizar sem remover da fila)
-- ✏️ Editar o corpo da mensagem in place (peek-and-edit atômico, preserva atributos)
+- ✏️ Editar o corpo da mensagem in place (peek-and-edit best-effort, race delete/send existe; preserva MessageAttributes, não todos os atributos SQS)
 - 🔍 Filtro de mensagens por conteúdo
 - ❌ Deletar mensagens individuais
 - 🔄 Redrive de DLQ (reprocessar mensagens que falharam)
@@ -66,7 +66,7 @@ docker compose up --build -d backend frontend
 Modo B (LocalStack) — sobe os três serviços:
 
 ```bash
-docker compose up --build
+docker compose --profile localstack up --build
 ```
 
 Acesse `http://localhost:5173`. Pronto.

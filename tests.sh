@@ -102,7 +102,13 @@ MOVE_MSG_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: ap
 if [ -n "$MOVE_MSG_ID" ]; then
   sleep 1
   t "Move single by messageId"  "curl -sf -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{\"targetQueue\":\"t-target\",\"messageId\":\"$MOVE_MSG_ID\"}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']==1\""
-  t "Move target=t-target"      "curl -sf -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{\"targetQueue\":\"t-target\",\"messageId\":\"$MOVE_MSG_ID\"}' 2>/dev/null; curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-target'][0];assert int(q['attributes']['ApproximateNumberOfMessages'])>0\" 2>/dev/null"
+  MOVE_MSG_ID2=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"move-me-single-2"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+  if [ -n "$MOVE_MSG_ID2" ]; then
+    sleep 1
+    t "Move target=t-target"      "curl -sf -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{\"targetQueue\":\"t-target\",\"messageId\":\"$MOVE_MSG_ID2\"}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']==1\"; curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-target'][0];assert int(q['attributes']['ApproximateNumberOfMessages'])>0\""
+  else
+    echo "  ⚠️  Skip move-target (no messageId)"; FAIL=$((FAIL+1))
+  fi
 else
   echo "  ⚠️  Skip move-single (no messageId)"; FAIL=$((FAIL+1))
 fi
