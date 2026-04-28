@@ -217,7 +217,7 @@ def lambda_handler(event, context):
                             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
                             found = True
                         except Exception as e:
-                            logger.exception("Edit: failed to delete message: %s", e)
+                            logger.exception("Edit: failed to delete message")
                             return cors_response(400, {'error': f'Failed to delete original message: {str(e)}'})
                     else:
                         # Return non-matching messages to the queue
@@ -365,8 +365,7 @@ def lambda_handler(event, context):
         if method == 'POST' and sub_path == '/move':
             target_name = body.get('targetQueue')
             max_msgs = int(body.get('maxMessages', 100))
-            receipt_handle = body.get('receiptHandle')
-            
+
             if not target_name:
                 return cors_response(400, {'error': 'targetQueue is required'})
             
@@ -433,7 +432,7 @@ def lambda_handler(event, context):
                 try:
                     sqs.send_message(**send_kwargs)
                 except Exception as e:
-                    logger.error("Move: failed to send message to target queue: %s", e)
+                    logger.exception("Move: failed to send message to target queue: %s", e)
                     try:
                         sqs.change_message_visibility(
                             QueueUrl=queue_url,
@@ -441,7 +440,7 @@ def lambda_handler(event, context):
                             VisibilityTimeout=0,
                         )
                     except Exception as vis_err:
-                        logger.error("Move: failed to restore source message visibility: %s", vis_err)
+                        logger.exception("Move: failed to restore source message visibility: %s", vis_err)
                     return cors_response(500, {
                         'error': f'Failed to send message to target queue: {str(e)}',
                     })
@@ -449,7 +448,7 @@ def lambda_handler(event, context):
                 try:
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=fresh_receipt)
                 except Exception as e:
-                    logger.error("Move: sent to target but failed to delete from source: %s", e)
+                    logger.exception("Move: sent to target but failed to delete from source: %s", str(e))
                     return cors_response(500, {
                         'error': f'Message sent to target queue but deletion from source failed: {str(e)}',
                     })
