@@ -13,6 +13,7 @@ services:
       retries: 10
     profiles:
       - localstack
+      - test
 
   backend:
     build: ./backend
@@ -54,6 +55,8 @@ services:
       - SKIP_FRONTEND_TESTS=1
     depends_on:
       frontend:
+        condition: service_healthy
+      localstack:
         condition: service_healthy
     profiles:
       - test
