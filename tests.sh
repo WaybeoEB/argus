@@ -56,7 +56,11 @@ echo ""
 echo "--- Delete Message ---"
 RECEIPT=$(curl -sf "$API/queues/t-std/messages?maxMessages=1" 2>/dev/null | python3 -c "import sys,json;m=json.load(sys.stdin);print(m[0]['ReceiptHandle'])" 2>/dev/null || echo "")
 if [ -n "$RECEIPT" ]; then
-  t "Delete single message"    "curl -sf -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"receiptHandle\":\"$RECEIPT\"}' | grep -q deleted"
+  if [ "${DEACTIVATE_DELETE_MESSAGES:-false}" = "true" ] || [ "${DEACTIVATE_DELETE_MESSAGES:-False}" = "True" ]; then
+    t "Delete message blocked"   "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d \"{\\\"receiptHandle\\\":\\\"$RECEIPT\\\"}\" | grep -q 403"
+  else
+    t "Delete single message"    "curl -sf -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d \"{\\\"receiptHandle\\\":\\\"$RECEIPT\\\"}\" | grep -q deleted"
+  fi
 else
   echo "  ⚠️  Skip delete (no receipt)"; FAIL=$((FAIL+1))
 fi
@@ -88,10 +92,10 @@ t "Edit missing body → 400"    "curl -s -o /dev/null -w '%{http_code}' -X PUT 
 t "Edit missing msgId → 400"   "curl -s -o /dev/null -w '%{http_code}' -X PUT $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"x\"}' | grep -q 400"
 
 # FIFO edit
-FIFO_EDIT_ID=$(curl -sf -X POST "$API/queues/t-fifo.fifo/messages" -H 'Content-Type: application/json' -d '{"messageBody":"fifo-before","messageGroupId":"g2","messageDeduplicationId":"dedup-edit-1"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+FIFO_EDIT_ID=$(curl -sf -X POST "$API/queues/t-fifo.fifo/messages" -H 'Content-Type: application/json' -d "{\"messageBody\":\"fifo-before\",\"messageGroupId\":\"g2\",\"messageDeduplicationId\":\"dedup-edit-$RANDOM\"}" 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
 if [ -n "$FIFO_EDIT_ID" ]; then
   sleep 1
-  t "FIFO edit with groupId"     "curl -sf -X PUT $API/queues/t-fifo.fifo/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"fifo-after\",\"messageId\":\"$FIFO_EDIT_ID\",\"messageGroupId\":\"g2\",\"messageDeduplicationId\":\"dedup-edit-1\"}' | grep -q messageId"
+  t "FIFO edit with groupId"     "curl -sf -X PUT $API/queues/t-fifo.fifo/messages -H 'Content-Type: application/json' -d \"{\\\"messageBody\\\":\\\"fifo-after\\\",\\\"messageId\\\":\\\"$FIFO_EDIT_ID\\\",\\\"messageGroupId\\\":\\\"g2\\\",\\\"messageDeduplicationId\\\":\\\"dedup-edit-$RANDOM\\\"}\" | grep -q messageId"
 else
   echo "  ⚠️  Skip FIFO edit (no messageId)"; FAIL=$((FAIL+1))
 fi
@@ -132,9 +136,18 @@ t "Search filters by name"    "curl -sf '$API/queues?search=t-std' | python3 -c 
 
 echo ""
 echo "--- Purge & Delete ---"
-t "Purge queue"                "curl -sf -X POST $API/queues/t-target/purge -H 'Content-Type: application/json' -d '{}' | grep -q purged"
-t "Delete queue"               "curl -sf -X DELETE $API/queues/t-target | grep -q deleted"
-t "Deleted not in list"        "! curl -sf $API/queues | grep -q t-target"
+if [ "${DEACTIVATE_PURGE:-false}" = "true" ] || [ "${DEACTIVATE_PURGE:-False}" = "True" ]; then
+  t "Purge queue blocked"      "curl -s -o /dev/null -w '%{http_code}' -X POST $API/queues/t-target/purge -H 'Content-Type: application/json' -d '{}' | grep -q 403"
+else
+  t "Purge queue"              "curl -sf -X POST $API/queues/t-target/purge -H 'Content-Type: application/json' -d '{}' | grep -q purged"
+fi
+
+if [ "${DEACTIVATE_DELETE:-false}" = "true" ] || [ "${DEACTIVATE_DELETE:-False}" = "True" ]; then
+  t "Delete queue blocked"     "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-target | grep -q 403"
+else
+  t "Delete queue"             "curl -sf -X DELETE $API/queues/t-target | grep -q deleted"
+  t "Deleted not in list"      "! curl -sf $API/queues | grep -q t-target"
+fi
 
 echo ""
 echo "--- Cleanup ---"

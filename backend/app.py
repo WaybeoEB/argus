@@ -130,6 +130,8 @@ def lambda_handler(event, context):
 
         # DELETE /queues/{queueName}
         if method == 'DELETE' and sub_path == '':
+            if os.environ.get('DEACTIVATE_DELETE', 'false').lower() == 'true':
+                return cors_response(403, {'error': 'Action not allowed'})
             sqs.delete_queue(QueueUrl=queue_url)
             return cors_response(200, {'deleted': queue_name})
 
@@ -140,6 +142,8 @@ def lambda_handler(event, context):
 
         # POST /queues/{queueName}/purge
         if method == 'POST' and sub_path == '/purge':
+            if os.environ.get('DEACTIVATE_PURGE', 'false').lower() == 'true':
+                return cors_response(403, {'error': 'Action not allowed'})
             sqs.purge_queue(QueueUrl=queue_url)
             return cors_response(200, {'purged': queue_name})
 
@@ -173,6 +177,8 @@ def lambda_handler(event, context):
 
         # DELETE /queues/{queueName}/messages
         if method == 'DELETE' and sub_path == '/messages':
+            if os.environ.get('DEACTIVATE_DELETE_MESSAGES', 'false').lower() == 'true':
+                return cors_response(403, {'error': 'Action not allowed'})
             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=body['receiptHandle'])
             return cors_response(200, {'deleted': True})
 
