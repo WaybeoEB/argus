@@ -5,6 +5,12 @@ API="${API_BASE:-http://localhost:5173}/api"
 BACKEND="${BACKEND_BASE:-http://localhost:3001}/api"
 FRONTEND="${FRONTEND_URL:-http://localhost:5173}"
 PASS=0; FAIL=0
+ 
+# Normalize deactivate flags to lowercase for case-insensitive checks
+DEACTIVATE_DELETE_LC=$(echo "${DEACTIVATE_DELETE:-false}" | tr '[:upper:]' '[:lower:]')
+DEACTIVATE_PURGE_LC=$(echo "${DEACTIVATE_PURGE:-false}" | tr '[:upper:]' '[:lower:]')
+DEACTIVATE_DELETE_MESSAGES_LC=$(echo "${DEACTIVATE_DELETE_MESSAGES:-false}" | tr '[:upper:]' '[:lower:]')
+
 
 t() {
   local name="$1" cmd="$2"
@@ -56,7 +62,7 @@ echo ""
 echo "--- Delete Message ---"
 RECEIPT=$(curl -sf "$API/queues/t-std/messages?maxMessages=1" 2>/dev/null | python3 -c "import sys,json;m=json.load(sys.stdin);print(m[0]['ReceiptHandle'])" 2>/dev/null || echo "")
 if [ -n "$RECEIPT" ]; then
-  if [ "${DEACTIVATE_DELETE_MESSAGES:-false}" = "true" ] || [ "${DEACTIVATE_DELETE_MESSAGES:-False}" = "True" ]; then
+  if [ "$DEACTIVATE_DELETE_MESSAGES_LC" = "true" ]; then
     t "Delete message blocked"   "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d \"{\\\"receiptHandle\\\":\\\"$RECEIPT\\\"}\" | grep -q 403"
   else
     t "Delete single message"    "curl -sf -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d \"{\\\"receiptHandle\\\":\\\"$RECEIPT\\\"}\" | grep -q deleted"
@@ -136,13 +142,13 @@ t "Search filters by name"    "curl -sf '$API/queues?search=t-std' | python3 -c 
 
 echo ""
 echo "--- Purge & Delete ---"
-if [ "${DEACTIVATE_PURGE:-false}" = "true" ] || [ "${DEACTIVATE_PURGE:-False}" = "True" ]; then
+if [ "$DEACTIVATE_PURGE_LC" = "true" ]; then
   t "Purge queue blocked"      "curl -s -o /dev/null -w '%{http_code}' -X POST $API/queues/t-target/purge -H 'Content-Type: application/json' -d '{}' | grep -q 403"
 else
   t "Purge queue"              "curl -sf -X POST $API/queues/t-target/purge -H 'Content-Type: application/json' -d '{}' | grep -q purged"
 fi
 
-if [ "${DEACTIVATE_DELETE:-false}" = "true" ] || [ "${DEACTIVATE_DELETE:-False}" = "True" ]; then
+if [ "$DEACTIVATE_DELETE_LC" = "true" ]; then
   t "Delete queue blocked"     "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-target | grep -q 403"
 else
   t "Delete queue"             "curl -sf -X DELETE $API/queues/t-target | grep -q deleted"
