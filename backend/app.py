@@ -15,8 +15,19 @@ class Config:
         self.deactivate_delete = os.environ.get('DEACTIVATE_DELETE', 'false').lower() == 'true'
         self.deactivate_purge = os.environ.get('DEACTIVATE_PURGE', 'false').lower() == 'true'
         self.deactivate_delete_messages = os.environ.get('DEACTIVATE_DELETE_MESSAGES', 'false').lower() == 'true'
-        self.sqs_move_poll_wait_seconds = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
-        self.sqs_move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+        try:
+            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
+            self.sqs_move_poll_wait_seconds = max(0, min(20, poll_wait))
+        except (ValueError, TypeError):
+            logger.warning("Invalid SQS_MOVE_POLL_WAIT_SECONDS, falling back to 5")
+            self.sqs_move_poll_wait_seconds = 5
+
+        try:
+            max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+            self.sqs_move_max_attempts = max(1, min(100, max_attempts))
+        except (ValueError, TypeError):
+            logger.warning("Invalid SQS_MOVE_MAX_ATTEMPTS, falling back to 5")
+            self.sqs_move_max_attempts = 5
 
 config = Config()
 
