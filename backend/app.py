@@ -231,6 +231,10 @@ def lambda_handler(event, context):
                                 found = True
                             except Exception as e:
                                 logger.exception("Delete: failed to delete message")
+                                try:
+                                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                                except Exception as vis_err:
+                                    logger.exception("Delete: failed to restore visibility on delete failure: %s", vis_err)
                                 return cors_response(500, {'error': f'Failed to delete message: {str(e)}'})
                         else:
                             sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
