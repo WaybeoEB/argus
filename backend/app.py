@@ -239,7 +239,11 @@ def lambda_handler(event, context):
                 if not found:
                     return cors_response(400, {'error': 'Could not find message to delete — it may have already been consumed'})
             else:
-                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+                try:
+                    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+                except Exception as e:
+                    logger.exception("Delete: failed to delete message by receiptHandle")
+                    return cors_response(500, {'error': f'Failed to delete message: {str(e)}'})
 
             return cors_response(200, {'deleted': True})
 
