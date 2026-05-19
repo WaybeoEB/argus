@@ -59,8 +59,6 @@ jobs:
         run: |
           cat <<EOF > .env
           VITE_API_URL=${{ secrets.VITE_API_URL }}
-          VITE_COGNITO_USER_POOL_ID=${{ secrets.VITE_COGNITO_USER_POOL_ID }}
-          VITE_COGNITO_CLIENT_ID=${{ secrets.VITE_COGNITO_CLIENT_ID }}
           EOF
 
       - name: Build Frontend
