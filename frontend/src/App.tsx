@@ -164,11 +164,11 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     catch (e: any) { setError(e.message) }
   }
 
-  const handleDeleteMsg = async (receiptHandle: string) => {
+  const handleDeleteMsg = async (messageId: string) => {
     if (!selected) return
     try {
-      await api.deleteMessage(selected.name, receiptHandle)
-      setMessages(prev => prev.filter(m => m.ReceiptHandle !== receiptHandle))
+      await api.deleteMessage(selected.name, messageId)
+      setMessages(prev => prev.filter(m => m.MessageId !== messageId))
       await loadQueues()
     } catch (e: any) { setError(e.message) }
   }
@@ -496,7 +496,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                                 dedupId: m.Attributes?.MessageDeduplicationId
                               })}>Edit</button>
                               <button className="btn warning small" onClick={() => setMoveMsgState({ msg: m, targetQueue: '' })}>Move</button>
-                              <button className="btn danger small" onClick={() => handleDeleteMsg(m.ReceiptHandle)}>Delete</button>
+                              <button className="btn danger small" onClick={() => handleDeleteMsg(m.MessageId)}>Delete</button>
                             </div>
                           </td>
                         </tr>

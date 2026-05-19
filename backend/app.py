@@ -204,7 +204,62 @@ def lambda_handler(event, context):
             # gated by this flag.
             if config.deactivate_delete_messages:
                 return cors_response(403, {'error': 'Action not allowed'})
-            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=body['receiptHandle'])
+            
+            message_id = body.get('messageId')
+            receipt_handle = body.get('receiptHandle')
+            
+            if not message_id and not receipt_handle:
+                return cors_response(400, {'error': 'messageId or receiptHandle is required'})
+                
+            # NOTE: For FIFO queues, this scan relies on the target message being in a
+            # different message group from any head-of-line messages encountered during
+            # polling. Non-matching messages are returned to the queue via VisibilityTimeout=0
+            # rather than deleted. This matches the pattern used by the edit and move-single
+            # endpoints and works well for DLQs with messages spread across many groups.
+            if message_id:
+                poll_wait = config.sqs_move_poll_wait_seconds
+                max_attempts = config.sqs_move_max_attempts
+                found = False
+                delete_error = None
+                for _ in range(max_attempts):
+                    batch = sqs.receive_message(
+                        QueueUrl=queue_url, MaxNumberOfMessages=10,
+                        WaitTimeSeconds=poll_wait, AttributeNames=['All'],
+                        MessageAttributeNames=['All'],
+                    )
+                    msgs = batch.get('Messages', [])
+                    if not msgs:
+                        continue
+                    for msg in msgs:
+                        if msg['MessageId'] == message_id:
+                            try:
+                                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                                found = True
+                            except Exception as e:
+                                logger.exception("Delete: failed to delete message")
+                                delete_error = e
+                                try:
+                                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                                except Exception as vis_err:
+                                    logger.exception("Delete: failed to restore visibility on delete failure: %s", vis_err)
+                        else:
+                            try:
+                                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                            except Exception as vis_err:
+                                logger.exception("Delete: failed to restore visibility of non-matching message: %s", vis_err)
+                    if found or delete_error:
+                        break
+                if delete_error:
+                    return cors_response(500, {'error': f'Failed to delete message: {str(delete_error)}'})
+                if not found:
+                    return cors_response(400, {'error': 'Could not find message to delete — it may have already been consumed'})
+            else:
+                try:
+                    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+                except Exception as e:
+                    logger.exception("Delete: failed to delete message by receiptHandle")
+                    return cors_response(500, {'error': f'Failed to delete message: {str(e)}'})
+
             return cors_response(200, {'deleted': True})
 
         # PUT /queues/{queueName}/messages — atomic edit (delete old + send new)
