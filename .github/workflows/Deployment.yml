@@ -1,23 +1,35 @@
-name: Deploy Argus
+name: Manual Deploy
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "Select deployment target"
+        required: true
+        type: choice
+        options:
+          - backend
+          - frontend
+          - both
 
 jobs:
 
   backend-deploy:
+    if: |
+      github.event.inputs.deploy_target == 'backend' ||
+      github.event.inputs.deploy_target == 'both'
+
     name: Deploy Backend
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
+
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
@@ -26,6 +38,7 @@ jobs:
       - name: Deploy Backend
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+
             cd /home/argus/argus
 
             git pull origin main
@@ -33,10 +46,15 @@ jobs:
             sudo systemctl restart argus
 
             sudo systemctl status argus --no-pager
+
           EOF
 
   frontend-deploy:
-    name: Build And Upload Frontend
+    if: |
+      github.event.inputs.deploy_target == 'frontend' ||
+      github.event.inputs.deploy_target == 'both'
+
+    name: Deploy Frontend
     runs-on: ubuntu-latest
 
     defaults:
@@ -44,7 +62,7 @@ jobs:
         working-directory: frontend
 
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup NodeJS
@@ -71,6 +89,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
           aws-region: ap-south-1
 
-      - name: Upload to S3
+      - name: Upload To S3
         run: |
           aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }}/ --delete
