@@ -211,6 +211,11 @@ def lambda_handler(event, context):
             if not message_id and not receipt_handle:
                 return cors_response(400, {'error': 'messageId or receiptHandle is required'})
                 
+            # NOTE: For FIFO queues, this scan relies on the target message being in a
+            # different message group from any head-of-line messages encountered during
+            # polling. Non-matching messages are returned to the queue via VisibilityTimeout=0
+            # rather than deleted. This matches the pattern used by the edit and move-single
+            # endpoints and works well for DLQs with messages spread across many groups.
             if message_id:
                 poll_wait = config.sqs_move_poll_wait_seconds
                 max_attempts = config.sqs_move_max_attempts
