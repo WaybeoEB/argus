@@ -8,12 +8,22 @@ import boto3
 
 logger = logging.getLogger(__name__)
 
+class Config:
+    def __init__(self):
+        self.sqs_endpoint_url = os.environ.get('SQS_ENDPOINT_URL')
+        self.aws_default_region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+        self.deactivate_delete = os.environ.get('DEACTIVATE_DELETE', 'false').lower() == 'true'
+        self.deactivate_purge = os.environ.get('DEACTIVATE_PURGE', 'false').lower() == 'true'
+        self.deactivate_delete_messages = os.environ.get('DEACTIVATE_DELETE_MESSAGES', 'false').lower() == 'true'
+        self.sqs_move_poll_wait_seconds = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
+        self.sqs_move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+
+config = Config()
+
 def get_sqs_client():
-    endpoint = os.environ.get('SQS_ENDPOINT_URL')
-    region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
-    if endpoint:
-        return boto3.client('sqs', endpoint_url=endpoint, region_name=region)
-    return boto3.client('sqs', region_name=region)
+    if config.sqs_endpoint_url:
+        return boto3.client('sqs', endpoint_url=config.sqs_endpoint_url, region_name=config.aws_default_region)
+    return boto3.client('sqs', region_name=config.aws_default_region)
 
 def _is_dlq_of(source_queue, target_arn):
     rp = source_queue['attributes'].get('RedrivePolicy')
@@ -130,7 +140,7 @@ def lambda_handler(event, context):
 
         # DELETE /queues/{queueName}
         if method == 'DELETE' and sub_path == '':
-            if os.environ.get('DEACTIVATE_DELETE', 'false').lower() == 'true':
+            if config.deactivate_delete:
                 return cors_response(403, {'error': 'Action not allowed'})
             sqs.delete_queue(QueueUrl=queue_url)
             return cors_response(200, {'deleted': queue_name})
@@ -142,7 +152,7 @@ def lambda_handler(event, context):
 
         # POST /queues/{queueName}/purge
         if method == 'POST' and sub_path == '/purge':
-            if os.environ.get('DEACTIVATE_PURGE', 'false').lower() == 'true':
+            if config.deactivate_purge:
                 return cors_response(403, {'error': 'Action not allowed'})
             sqs.purge_queue(QueueUrl=queue_url)
             return cors_response(200, {'purged': queue_name})
@@ -177,7 +187,7 @@ def lambda_handler(event, context):
 
         # DELETE /queues/{queueName}/messages
         if method == 'DELETE' and sub_path == '/messages':
-            if os.environ.get('DEACTIVATE_DELETE_MESSAGES', 'false').lower() == 'true':
+            if config.deactivate_delete_messages:
                 return cors_response(403, {'error': 'Action not allowed'})
             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=body['receiptHandle'])
             return cors_response(200, {'deleted': True})
@@ -195,8 +205,8 @@ def lambda_handler(event, context):
             # Long polling (WaitTimeSeconds > 0) queries all SQS servers, avoiding
             # the random-subset sampling of short polling that can miss messages on
             # busy queues.
-            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
-            max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+            poll_wait = config.sqs_move_poll_wait_seconds
+            max_attempts = config.sqs_move_max_attempts
             found = False
             for _ in range(max_attempts):
                 batch = sqs.receive_message(
@@ -294,8 +304,8 @@ def lambda_handler(event, context):
                 is_fifo = source_url.endswith('.fifo')
 
             moved = 0
-            move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
-            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
+            move_max_attempts = config.sqs_move_max_attempts
+            poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
             while moved < max_msgs:
                 batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=poll_wait, AttributeNames=['All'], MessageAttributeNames=['All'])
@@ -389,8 +399,8 @@ def lambda_handler(event, context):
                 # receipt handle returned to the frontend is unreliable by the time the
                 # move request arrives.  Re-receive by MessageId to get a fresh handle,
                 # matching the pattern used by the edit (PUT /messages) endpoint.
-                poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
-                max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
+                poll_wait = config.sqs_move_poll_wait_seconds
+                max_attempts = config.sqs_move_max_attempts
                 found_msg = None
                 empty_receives = 0
                 for _ in range(max_attempts):
@@ -462,8 +472,8 @@ def lambda_handler(event, context):
                 return cors_response(200, {'moved': 1, 'targetQueue': target_name})
 
             moved = 0
-            move_max_attempts = int(os.environ.get('SQS_MOVE_MAX_ATTEMPTS', '5'))
-            poll_wait = int(os.environ.get('SQS_MOVE_POLL_WAIT_SECONDS', '5'))
+            move_max_attempts = config.sqs_move_max_attempts
+            poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
             while moved < max_msgs:
                 batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=poll_wait, AttributeNames=['All'], MessageAttributeNames=['All'])
