@@ -52,7 +52,7 @@ jobs:
 
             sleep 5
 
-            sudo systemctl status argus --no-pager
+            sudo systemctl status argus
 
           EOF
 
