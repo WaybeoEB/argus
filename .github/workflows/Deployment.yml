@@ -41,7 +41,7 @@ jobs:
 
             cd /home/argus/argus
 
-            git pull origin main
+            git pull
 
             sudo systemctl restart argus
 
