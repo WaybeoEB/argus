@@ -37,7 +37,12 @@ jobs:
 
       - name: Deploy Backend
         run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+          ssh -tt \
+            -o StrictHostKeyChecking=no \
+            -i ~/.ssh/id_rsa \
+            ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+
+            set -e
 
             cd /home/argus/argus
 
@@ -45,7 +50,9 @@ jobs:
 
             sudo systemctl restart argus
 
-            sudo systemctl status argus
+            sleep 5
+
+            sudo systemctl status argus --no-pager
 
           EOF
 
