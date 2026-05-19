@@ -198,6 +198,10 @@ def lambda_handler(event, context):
 
         # DELETE /queues/{queueName}/messages
         if method == 'DELETE' and sub_path == '/messages':
+            # DEACTIVATE_DELETE_MESSAGES guards only explicit single-message deletion
+            # (e.g., a "Delete" button in the UI). Workflow operations that internally
+            # consume and re-send messages (edit, move, redrive) are intentionally not
+            # gated by this flag.
             if config.deactivate_delete_messages:
                 return cors_response(403, {'error': 'Action not allowed'})
             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=body['receiptHandle'])
