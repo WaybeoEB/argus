@@ -29,6 +29,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
       - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - DEACTIVATE_DELETE=${DEACTIVATE_DELETE:-false}
+      - DEACTIVATE_PURGE=${DEACTIVATE_PURGE:-false}
+      - DEACTIVATE_DELETE_MESSAGES=${DEACTIVATE_DELETE_MESSAGES:-false}
 
 
   frontend:
@@ -54,6 +57,9 @@ services:
       - API_BASE=http://backend:3001
       - BACKEND_BASE=http://backend:3001
       - SKIP_FRONTEND_TESTS=1
+      - DEACTIVATE_DELETE=${DEACTIVATE_DELETE:-false}
+      - DEACTIVATE_PURGE=${DEACTIVATE_PURGE:-false}
+      - DEACTIVATE_DELETE_MESSAGES=${DEACTIVATE_DELETE_MESSAGES:-false}
     depends_on:
       frontend:
         condition: service_healthy
