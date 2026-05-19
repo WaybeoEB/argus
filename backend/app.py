@@ -220,6 +220,7 @@ def lambda_handler(event, context):
                 poll_wait = config.sqs_move_poll_wait_seconds
                 max_attempts = config.sqs_move_max_attempts
                 found = False
+                delete_error = None
                 for _ in range(max_attempts):
                     batch = sqs.receive_message(
                         QueueUrl=queue_url, MaxNumberOfMessages=10,
@@ -236,15 +237,20 @@ def lambda_handler(event, context):
                                 found = True
                             except Exception as e:
                                 logger.exception("Delete: failed to delete message")
+                                delete_error = e
                                 try:
                                     sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
                                 except Exception as vis_err:
                                     logger.exception("Delete: failed to restore visibility on delete failure: %s", vis_err)
-                                return cors_response(500, {'error': f'Failed to delete message: {str(e)}'})
                         else:
-                            sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
-                    if found:
+                            try:
+                                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                            except Exception as vis_err:
+                                logger.exception("Delete: failed to restore visibility of non-matching message: %s", vis_err)
+                    if found or delete_error:
                         break
+                if delete_error:
+                    return cors_response(500, {'error': f'Failed to delete message: {str(delete_error)}'})
                 if not found:
                     return cors_response(400, {'error': 'Could not find message to delete — it may have already been consumed'})
             else:
