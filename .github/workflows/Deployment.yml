@@ -50,10 +50,6 @@ jobs:
 
             sudo systemctl restart argus
 
-            sleep 5
-
-            sudo systemctl status argus
-
           EOF
 
   frontend-deploy:
