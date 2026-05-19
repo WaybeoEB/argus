@@ -45,7 +45,7 @@ jobs:
 
             sudo systemctl restart argus
 
-            sudo systemctl status argus --no-pager
+            sudo systemctl status argus
 
           EOF
 
