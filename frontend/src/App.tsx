@@ -164,13 +164,34 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     catch (e: any) { setError(e.message) }
   }
 
-  const handleDeleteMsg = async (messageId: string) => {
+  const handleDeleteMsg = (messageId: string) => {
     if (!selected) return
-    try {
-      await api.deleteMessage(selected.name, messageId)
-      setMessages(prev => prev.filter(m => m.MessageId !== messageId))
-      await loadQueues()
-    } catch (e: any) { setError(e.message) }
+    setConfirmModal({
+      title: '🗑️ Delete Message',
+      message: `Are you sure you want to permanently delete message "${messageId}"? This action cannot be undone.`,
+      confirmText: 'Delete Message',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        try {
+          await api.deleteMessage(selected.name, messageId)
+          setMessages(prev => prev.filter(m => m.MessageId !== messageId))
+          await loadQueues()
+        } catch (e: any) { setError(e.message) }
+      }
+    })
+  }
+
+  const handleLogout = () => {
+    if (!onLogout) return
+    setConfirmModal({
+      title: '🚪 Logout',
+      message: 'Are you sure you want to log out?',
+      confirmText: 'Logout',
+      onConfirm: () => {
+        setConfirmModal(null)
+        onLogout()
+      }
+    })
   }
 
   const handleEditMsg = async () => {
@@ -306,7 +327,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           ))}
         </ul>
         <button className="btn" onClick={loadQueues} style={{ width: '100%', marginTop: 8 }}>↻ Refresh</button>
-        {onLogout && <button className="btn danger" onClick={onLogout} style={{ width: '100%', marginTop: 8 }}>Logout</button>}
+        {onLogout && <button className="btn danger" onClick={handleLogout} style={{ width: '100%', marginTop: 8 }}>Logout</button>}
       </aside>
 
       {isCreateModalOpen && (
