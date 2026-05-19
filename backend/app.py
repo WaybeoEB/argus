@@ -204,7 +204,43 @@ def lambda_handler(event, context):
             # gated by this flag.
             if config.deactivate_delete_messages:
                 return cors_response(403, {'error': 'Action not allowed'})
-            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=body['receiptHandle'])
+            
+            message_id = body.get('messageId')
+            receipt_handle = body.get('receiptHandle')
+            
+            if not message_id and not receipt_handle:
+                return cors_response(400, {'error': 'messageId or receiptHandle is required'})
+                
+            if message_id:
+                poll_wait = config.sqs_move_poll_wait_seconds
+                max_attempts = config.sqs_move_max_attempts
+                found = False
+                for _ in range(max_attempts):
+                    batch = sqs.receive_message(
+                        QueueUrl=queue_url, MaxNumberOfMessages=10,
+                        WaitTimeSeconds=poll_wait, AttributeNames=['All'],
+                        MessageAttributeNames=['All'],
+                    )
+                    msgs = batch.get('Messages', [])
+                    if not msgs:
+                        continue
+                    for msg in msgs:
+                        if msg['MessageId'] == message_id:
+                            try:
+                                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                                found = True
+                            except Exception as e:
+                                logger.exception("Delete: failed to delete message")
+                                return cors_response(500, {'error': f'Failed to delete message: {str(e)}'})
+                        else:
+                            sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                    if found:
+                        break
+                if not found:
+                    return cors_response(400, {'error': 'Could not find message to delete — it may have already been consumed'})
+            else:
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+
             return cors_response(200, {'deleted': True})
 
         # PUT /queues/{queueName}/messages — atomic edit (delete old + send new)

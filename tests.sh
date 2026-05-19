@@ -60,15 +60,16 @@ t "FIFO send with group"       "curl -sf -X POST $API/queues/t-fifo.fifo/message
 
 echo ""
 echo "--- Delete Message ---"
-RECEIPT=$(curl -sf "$API/queues/t-std/messages?maxMessages=1" 2>/dev/null | python3 -c "import sys,json;m=json.load(sys.stdin);print(m[0]['ReceiptHandle'])" 2>/dev/null || echo "")
-if [ -n "$RECEIPT" ]; then
+DEL_MSG_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"delete-me"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+if [ -n "$DEL_MSG_ID" ]; then
+  sleep 1
   if [ "$DEACTIVATE_DELETE_MESSAGES_LC" = "true" ]; then
-    t "Delete message blocked"   "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d \"{\\\"receiptHandle\\\":\\\"$RECEIPT\\\"}\" | grep -q 403"
+    t "Delete message blocked"   "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"$DEL_MSG_ID\"}' | grep -q 403"
   else
-    t "Delete single message"    "curl -sf -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d \"{\\\"receiptHandle\\\":\\\"$RECEIPT\\\"}\" | grep -q deleted"
+    t "Delete single message"    "curl -sf -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"$DEL_MSG_ID\"}' | grep -q deleted"
   fi
 else
-  echo "  ⚠️  Skip delete (no receipt)"; FAIL=$((FAIL+1))
+  echo "  ⚠️  Skip delete (no messageId)"; FAIL=$((FAIL+1))
 fi
 
 echo ""
@@ -85,10 +86,13 @@ t "Target has messages"        "curl -sf $API/queues | python3 -c \"import sys,j
 
 echo ""
 echo "--- Edit Message ---"
+# Purge leftover messages from prior test runs (cleanup may have been blocked by DEACTIVATE_DELETE)
+curl -sf -X POST "$API/queues/t-std/purge" -H 'Content-Type: application/json' -d '{}' > /dev/null 2>&1 || true
+sleep 1
 # Send a message to edit
 EDIT_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"before-edit"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
 if [ -n "$EDIT_ID" ]; then
-  sleep 1
+  sleep 2
   t "Edit message body"          "curl -sf -X PUT $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"after-edit\",\"messageId\":\"$EDIT_ID\"}' | grep -q messageId"
   t "Edited body visible"        "curl -sf '$API/queues/t-std/messages?maxMessages=10' | grep -q after-edit"
 else
@@ -110,7 +114,7 @@ echo ""
 echo "--- Move Single by messageId ---"
 MOVE_MSG_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"move-me-single"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
 if [ -n "$MOVE_MSG_ID" ]; then
-  sleep 1
+  sleep 3
   t "Move single by messageId"  "curl -sf -X POST $API/queues/t-std/move -H 'Content-Type: application/json' -d '{\"targetQueue\":\"t-target\",\"messageId\":\"$MOVE_MSG_ID\"}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']==1\""
   MOVE_MSG_ID2=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"move-me-single-2"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
   if [ -n "$MOVE_MSG_ID2" ]; then
