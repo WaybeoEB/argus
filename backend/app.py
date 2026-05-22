@@ -184,16 +184,46 @@ def lambda_handler(event, context):
 
         # GET /queues/{queueName}/messages (peek)
         if method == 'GET' and sub_path == '/messages':
-            max_msgs = int(params.get('maxMessages', '5'))
+            max_msgs = int(params.get('maxMessages', '10'))
             wait = int(params.get('waitTime', '0'))
-            result = sqs.receive_message(
-                QueueUrl=queue_url, MaxNumberOfMessages=min(max_msgs, 10),
-                WaitTimeSeconds=wait, AttributeNames=['All'],
-            )
-            messages = result.get('Messages', [])
-            # Return messages to queue by setting visibility to 0
-            for msg in messages:
-                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+            max_polls = int(params.get('maxPolls', '1'))
+            max_polls = max(1, min(max_polls, 10))  # clamp 1-10
+
+            seen = {}  # MessageId -> message (deduplicate across polls)
+            receipts = []  # ReceiptHandles to reset after all polls (standard queues only)
+            is_fifo = queue_name.endswith('.fifo')
+            for _ in range(max_polls):
+                batch_size = min(10, max_msgs - len(seen))
+                if batch_size <= 0:
+                    break
+                result = sqs.receive_message(
+                    QueueUrl=queue_url, MaxNumberOfMessages=batch_size,
+                    WaitTimeSeconds=wait, AttributeNames=['All'],
+                )
+                for msg in result.get('Messages', []):
+                    seen[msg['MessageId']] = msg
+                    if is_fifo:
+                        # FIFO: reset immediately so next poll can access
+                        # subsequent messages in the same group
+                        sqs.change_message_visibility(
+                            QueueUrl=queue_url,
+                            ReceiptHandle=msg['ReceiptHandle'],
+                            VisibilityTimeout=0,
+                        )
+                    else:
+                        # Standard: defer reset so subsequent polls return
+                        # different messages from different servers
+                        receipts.append(msg['ReceiptHandle'])
+
+            # Reset visibility for ALL messages at the end so they return to the queue.
+            # Deferring this ensures subsequent polls within the loop see different messages.
+            for rh in receipts:
+                try:
+                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=rh, VisibilityTimeout=0)
+                except Exception:
+                    pass  # message may have been deleted or handle expired
+
+            messages = list(seen.values())
             return cors_response(200, messages)
 
         # DELETE /queues/{queueName}/messages

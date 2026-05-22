@@ -53,6 +53,8 @@ section h3 { font-size: 15px; margin-bottom: 8px; display: flex; align-items: ce
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; }
 thead th { background: #f0f0f0; font-weight: 600; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { background: #e4e4e4; }
 tbody tr:nth-child(even) { background: #fafafa; }
 .mono { font-family: monospace; font-size: 12px; }
 
@@ -68,6 +70,12 @@ tbody tr:nth-child(even) { background: #fafafa; }
 /* Filter */
 .filter-input { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; margin-bottom: 8px; }
 .filter-count { font-size: 12px; color: #888; margin-top: 4px; }
+
+/* Scrollable messages table */
+.messages-scroll { max-height: 600px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
+.messages-scroll thead th { position: sticky; top: 0; background: #f0f0f0; z-index: 1; }
+.peek-total { font-size: 12px; color: #888; margin-left: 8px; font-weight: normal; }
+.fifo-hint { font-size: 13px; color: #856404; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 
 .fifo-fields label {
   display: block;

@@ -53,8 +53,9 @@ t "Verify updated attrs"       "curl -sf $API/queues | python3 -c \"import sys,j
 echo ""
 echo "--- Send & Receive ---"
 t "Send message"               "curl -sf -X POST $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"hello\"}' | grep -q messageId"
-t "Peek returns message"       "curl -sf '$API/queues/t-std/messages?maxMessages=5' | grep -q hello"
-t "Still available after peek" "curl -sf '$API/queues/t-std/messages?maxMessages=5' | grep -q hello"
+sleep 1
+t "Peek returns message"       "curl -sf '$API/queues/t-std/messages?maxMessages=10&waitTime=1' | grep -q hello"
+t "Still available after peek" "curl -sf '$API/queues/t-std/messages?maxMessages=10&waitTime=1' | grep -q hello"
 t "Batch send 3 msgs"          "curl -sf -X POST $API/queues/t-std/messages/batch -H 'Content-Type: application/json' -d '{\"messages\":[\"b1\",\"b2\",\"b3\"]}' | grep -q '\"sent\": 3'"
 t "FIFO send with group"       "curl -sf -X POST $API/queues/t-fifo.fifo/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"fm\",\"messageGroupId\":\"g1\",\"messageDeduplicationId\":\"d1\"}' | grep -q messageId"
 
@@ -145,6 +146,22 @@ t "Response has pagination"    "curl -sf '$API/queues?page=1&pageSize=2' | pytho
 t "Search filters by name"    "curl -sf '$API/queues?search=t-std' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert all('t-std' in q['name'] for q in d['queues'])\""
 
 echo ""
+echo "--- Peek Message Pagination ---"
+# Create a queue and populate with 15 messages
+curl -sf -X POST "$API/queues" -H 'Content-Type: application/json' -d '{"name":"t-peek"}' > /dev/null 2>&1 || true
+for i in $(seq 1 15); do
+  curl -sf -X POST "$API/queues/t-peek/messages" -H 'Content-Type: application/json' -d "{\"messageBody\":\"peek-msg-$i\"}" > /dev/null 2>&1
+done
+sleep 1
+t "First peek returns ≤10"    "curl -sf '$API/queues/t-peek/messages?maxMessages=10' | python3 -c \"import sys,json;msgs=json.load(sys.stdin);assert len(msgs)<=10, f'expected <=10, got {len(msgs)}'\""
+t "Peek returns list"          "curl -sf '$API/queues/t-peek/messages?maxMessages=10' | python3 -c \"import sys,json;msgs=json.load(sys.stdin);assert isinstance(msgs, list)\""
+t "maxPolls=3 gets more"      "curl -sf '$API/queues/t-peek/messages?maxMessages=50&maxPolls=3' | python3 -c \"import sys,json;msgs=json.load(sys.stdin);ids=set(m['MessageId'] for m in msgs);assert len(ids)>=10, f'expected >=10 unique, got {len(ids)}'\""
+t "Messages still available"  "curl -sf '$API/queues/t-peek/messages?maxMessages=5' | python3 -c \"import sys,json;msgs=json.load(sys.stdin);assert len(msgs)>0, 'expected messages still visible after peek'\""
+# Cleanup
+curl -sf -X POST "$API/queues/t-peek/purge" -H 'Content-Type: application/json' -d '{}' > /dev/null 2>&1 || true
+curl -s -X DELETE "$API/queues/t-peek" > /dev/null 2>&1 || true
+
+echo ""
 echo "--- Purge & Delete ---"
 if [ "$DEACTIVATE_PURGE_LC" = "true" ]; then
   t "Purge queue blocked"      "curl -s -o /dev/null -w '%{http_code}' -X POST $API/queues/t-target/purge -H 'Content-Type: application/json' -d '{}' | grep -q 403"
@@ -161,7 +178,7 @@ fi
 
 echo ""
 echo "--- Cleanup ---"
-for q in t-std t-fifo.fifo t-dlq t-src t-target; do
+for q in t-std t-fifo.fifo t-dlq t-src t-target t-peek; do
   curl -s -X DELETE "$API/queues/$q" > /dev/null 2>&1 || true
 done
 echo "  🧹 Test queues cleaned up"
