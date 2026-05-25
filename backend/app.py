@@ -209,11 +209,22 @@ def lambda_handler(event, context):
                     if is_fifo:
                         # FIFO: reset immediately so next poll can access
                         # subsequent messages in the same group
-                        sqs.change_message_visibility(
-                            QueueUrl=queue_url,
-                            ReceiptHandle=msg['ReceiptHandle'],
-                            VisibilityTimeout=0,
-                        )
+                        try:
+                            sqs.change_message_visibility(
+                                QueueUrl=queue_url,
+                                ReceiptHandle=msg['ReceiptHandle'],
+                                VisibilityTimeout=0,
+                            )
+                        except Exception as e:
+                            # FIFO visibility implications:
+                            # If change_message_visibility fails for a FIFO queue message,
+                            # the visibility timeout won't be reset to 0, which could temporarily block/delay
+                            # processing of subsequent messages in the same message group during peek operations.
+                            # Future readers: Consider implementing retries or setting up alerting for these failures.
+                            logger.error(
+                                "Failed to reset visibility for FIFO message: %s. Queue: %s, MessageId: %s, ReceiptHandle: %s",
+                                e, queue_url, msg.get('MessageId'), msg.get('ReceiptHandle'), exc_info=True
+                            )
                     else:
                         # Standard: defer reset so subsequent polls return
                         # different messages from different servers
