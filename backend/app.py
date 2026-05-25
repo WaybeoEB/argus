@@ -192,15 +192,19 @@ def lambda_handler(event, context):
             seen = {}  # MessageId -> message (deduplicate across polls)
             receipts = []  # ReceiptHandles to reset after all polls (standard queues only)
             is_fifo = queue_name.endswith('.fifo')
-            for _ in range(max_polls):
+            prev_messages_empty = False
+            for i in range(max_polls):
                 batch_size = min(10, max_msgs - len(seen))
                 if batch_size <= 0:
                     break
+                wait_seconds = wait if (i == 0 or prev_messages_empty) else 0
                 result = sqs.receive_message(
                     QueueUrl=queue_url, MaxNumberOfMessages=batch_size,
-                    WaitTimeSeconds=wait, AttributeNames=['All'],
+                    WaitTimeSeconds=wait_seconds, AttributeNames=['All'],
                 )
-                for msg in result.get('Messages', []):
+                msgs = result.get('Messages', [])
+                prev_messages_empty = not msgs
+                for msg in msgs:
                     seen[msg['MessageId']] = msg
                     if is_fifo:
                         # FIFO: reset immediately so next poll can access
