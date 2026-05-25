@@ -235,8 +235,12 @@ def lambda_handler(event, context):
             for rh in receipts:
                 try:
                     sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=rh, VisibilityTimeout=0)
-                except Exception:
-                    pass  # message may have been deleted or handle expired
+                except Exception as e:
+                    # message may have been deleted or handle expired
+                    logger.debug(
+                        "Failed to reset visibility for standard message: %s. Queue: %s, ReceiptHandle: %s",
+                        e, queue_url, rh
+                    )
 
             messages = list(seen.values())
             return cors_response(200, messages)
