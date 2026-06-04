@@ -35,6 +35,8 @@ interface ConfirmState {
 }
 
 type View = 'dashboard' | 'queue'
+type SortField = 'MessageId' | 'Body' | 'SentTimestamp' | 'MessageGroupId'
+type SortDir = 'asc' | 'desc'
 
 export default function App({ onLogout }: { onLogout?: () => void }) {
   const [view, setView] = useState<View>('dashboard')
@@ -56,6 +58,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   const [confirmModal, setConfirmModal] = useState<ConfirmState | null>(null)
   const [editMsgModal, setEditMsgModal] = useState<EditMsgState | null>(null)
   const [moveMsgState, setMoveMsgState] = useState<{ msg: Message, targetQueue: string } | null>(null)
+  const [peekLoading, setPeekLoading] = useState(false)
+  const [sortField, setSortField] = useState<SortField>('SentTimestamp')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const showSuccess = (msg: string) => { setSuccess(msg); setTimeout(() => setSuccess(''), 4000) }
 
@@ -72,6 +77,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
 
   const selectQueue = (q: Queue) => {
     setSelected(q); setMessages([]); setView('queue'); setFilterText('')
+    setSortField('SentTimestamp'); setSortDir('desc')
     setEditAttrs({
       VisibilityTimeout: q.attributes.VisibilityTimeout || '30',
       MessageRetentionPeriod: q.attributes.MessageRetentionPeriod || '345600',
@@ -160,8 +166,12 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
 
   const handleReceive = async () => {
     if (!selected) return
-    try { setMessages(await api.receiveMessages(selected.name, 10)) }
-    catch (e: any) { setError(e.message) }
+    setPeekLoading(true)
+    try {
+      const fetched = await api.receiveMessages(selected.name, 100, 0, 10)
+      setMessages(fetched)
+    } catch (e: any) { setError(e.message) }
+    finally { setPeekLoading(false) }
   }
 
   const handleDeleteMsg = (messageId: string) => {
@@ -304,9 +314,27 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   }
 
   const isFifo = selected?.attributes.FifoQueue === 'true'
-  const filteredMessages = filterText
+
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir(field === 'SentTimestamp' ? 'desc' : 'asc') }
+  }
+  const sortIndicator = (field: SortField) => sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
+
+  const filteredMessages = (filterText
     ? messages.filter(m => m.Body.toLowerCase().includes(filterText.toLowerCase()) || m.MessageId.toLowerCase().includes(filterText.toLowerCase()))
-    : messages
+    : [...messages]
+  ).sort((a, b) => {
+    let va: string, vb: string
+    switch (sortField) {
+      case 'MessageId': va = a.MessageId; vb = b.MessageId; break
+      case 'Body': va = a.Body; vb = b.Body; break
+      case 'MessageGroupId': va = a.Attributes?.MessageGroupId || ''; vb = b.Attributes?.MessageGroupId || ''; break
+      case 'SentTimestamp': default: va = a.Attributes?.SentTimestamp || '0'; vb = b.Attributes?.SentTimestamp || '0'; break
+    }
+    const cmp = sortField === 'SentTimestamp' ? Number(va) - Number(vb) : va.localeCompare(vb)
+    return sortDir === 'asc' ? cmp : -cmp
+  })
 
   return (
     <div className="app">
@@ -495,36 +523,56 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
             </section>
 
             <section>
-              <h3>Messages <button className="btn primary small" onClick={handleReceive}>Peek Messages</button></h3>
+              <h3>Messages
+                <button className="btn primary small" onClick={handleReceive} disabled={peekLoading}>
+                  {peekLoading ? '⏳ Loading…' : 'Peek Messages'}
+                </button>
+                {messages.length > 0 && (
+                  <span className="peek-total">{filteredMessages.length}{filterText ? ` of ${messages.length}` : ''} message(s)</span>
+                )}
+              </h3>
               {messages.length > 0 && (
                 <>
                   <input className="filter-input" value={filterText} onChange={e => setFilterText(e.target.value)}
                     placeholder="🔍 Filter by body or message ID..." />
-                  <table>
-                    <thead><tr><th>ID</th><th>Body</th><th>Sent</th><th></th></tr></thead>
-                    <tbody>
-                      {filteredMessages.map(m => (
-                        <tr key={m.MessageId}>
-                          <td className="mono">{m.MessageId.slice(0, 12)}…</td>
-                          <td className="mono">{m.Body.length > 100 ? m.Body.slice(0, 100) + '…' : m.Body}</td>
-                          <td>{m.Attributes?.SentTimestamp ? new Date(Number(m.Attributes.SentTimestamp)).toLocaleString() : '-'}</td>
-                          <td>
-                            <div className="btn-row">
-                              <button className="btn primary small" onClick={() => setEditMsgModal({
-                                original: m,
-                                body: m.Body,
-                                groupId: m.Attributes?.MessageGroupId,
-                                dedupId: m.Attributes?.MessageDeduplicationId
-                              })}>Edit</button>
-                              <button className="btn warning small" onClick={() => setMoveMsgState({ msg: m, targetQueue: '' })}>Move</button>
-                              <button className="btn danger small" onClick={() => handleDeleteMsg(m.MessageId)}>Delete</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {filterText && <p className="filter-count">{filteredMessages.length} of {messages.length} messages</p>}
+                  <div className="messages-scroll">
+                    <table>
+                      <thead><tr>
+                        <th className="sortable" onClick={() => toggleSort('MessageId')}>ID{sortIndicator('MessageId')}</th>
+                        <th className="sortable" onClick={() => toggleSort('Body')}>Body{sortIndicator('Body')}</th>
+                        {isFifo && <th className="sortable" onClick={() => toggleSort('MessageGroupId')}>Group{sortIndicator('MessageGroupId')}</th>}
+                        <th className="sortable" onClick={() => toggleSort('SentTimestamp')}>Sent{sortIndicator('SentTimestamp')}</th>
+                        <th></th>
+                      </tr></thead>
+                      <tbody>
+                        {filteredMessages.map(m => (
+                          <tr key={m.MessageId}>
+                            <td className="mono">{m.MessageId.slice(0, 12)}…</td>
+                            <td className="mono">{m.Body.length > 100 ? m.Body.slice(0, 100) + '…' : m.Body}</td>
+                            {isFifo && <td className="mono">{m.Attributes?.MessageGroupId || '-'}</td>}
+                            <td>{m.Attributes?.SentTimestamp ? new Date(Number(m.Attributes.SentTimestamp)).toLocaleString() : '-'}</td>
+                            <td>
+                              <div className="btn-row">
+                                <button className="btn primary small" onClick={() => setEditMsgModal({
+                                  original: m,
+                                  body: m.Body,
+                                  groupId: m.Attributes?.MessageGroupId,
+                                  dedupId: m.Attributes?.MessageDeduplicationId
+                                })}>Edit</button>
+                                <button className="btn warning small" onClick={() => setMoveMsgState({ msg: m, targetQueue: '' })}>Move</button>
+                                <button className="btn danger small" onClick={() => handleDeleteMsg(m.MessageId)}>Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {isFifo && messages.length < Number(selected.attributes.ApproximateNumberOfMessages || 0) && (
+                    <p className="fifo-hint">
+                      ⚠️ Showing {messages.length} of ~{selected.attributes.ApproximateNumberOfMessages} — FIFO queues limit peek depth due to per-group in-flight constraints. Use <strong>Export</strong> to see all messages.
+                    </p>
+                  )}
                 </>
               )}
             </section>

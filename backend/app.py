@@ -184,16 +184,65 @@ def lambda_handler(event, context):
 
         # GET /queues/{queueName}/messages (peek)
         if method == 'GET' and sub_path == '/messages':
-            max_msgs = int(params.get('maxMessages', '5'))
+            max_msgs = int(params.get('maxMessages', '10'))
             wait = int(params.get('waitTime', '0'))
-            result = sqs.receive_message(
-                QueueUrl=queue_url, MaxNumberOfMessages=min(max_msgs, 10),
-                WaitTimeSeconds=wait, AttributeNames=['All'],
-            )
-            messages = result.get('Messages', [])
-            # Return messages to queue by setting visibility to 0
-            for msg in messages:
-                sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+            max_polls = int(params.get('maxPolls', '1'))
+            max_polls = max(1, min(max_polls, 10))  # clamp 1-10
+
+            seen = {}  # MessageId -> message (deduplicate across polls)
+            receipts = []  # ReceiptHandles to reset after all polls (standard queues only)
+            is_fifo = queue_name.endswith('.fifo')
+            prev_messages_empty = False
+            for i in range(max_polls):
+                batch_size = min(10, max_msgs - len(seen))
+                if batch_size <= 0:
+                    break
+                wait_seconds = wait if (i == 0 or prev_messages_empty) else 0
+                result = sqs.receive_message(
+                    QueueUrl=queue_url, MaxNumberOfMessages=batch_size,
+                    WaitTimeSeconds=wait_seconds, AttributeNames=['All'],
+                )
+                msgs = result.get('Messages', [])
+                prev_messages_empty = not msgs
+                for msg in msgs:
+                    seen[msg['MessageId']] = msg
+                    if is_fifo:
+                        # FIFO: reset immediately so next poll can access
+                        # subsequent messages in the same group
+                        try:
+                            sqs.change_message_visibility(
+                                QueueUrl=queue_url,
+                                ReceiptHandle=msg['ReceiptHandle'],
+                                VisibilityTimeout=0,
+                            )
+                        except Exception as e:
+                            # FIFO visibility implications:
+                            # If change_message_visibility fails for a FIFO queue message,
+                            # the visibility timeout won't be reset to 0, which could temporarily block/delay
+                            # processing of subsequent messages in the same message group during peek operations.
+                            # Future readers: Consider implementing retries or setting up alerting for these failures.
+                            logger.error(
+                                "Failed to reset visibility for FIFO message: %s. Queue: %s, MessageId: %s, ReceiptHandle: %s",
+                                e, queue_url, msg.get('MessageId'), msg.get('ReceiptHandle'), exc_info=True
+                            )
+                    else:
+                        # Standard: defer reset so subsequent polls return
+                        # different messages from different servers
+                        receipts.append(msg['ReceiptHandle'])
+
+            # Reset visibility for ALL messages at the end so they return to the queue.
+            # Deferring this ensures subsequent polls within the loop see different messages.
+            for rh in receipts:
+                try:
+                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=rh, VisibilityTimeout=0)
+                except Exception as e:
+                    # message may have been deleted or handle expired
+                    logger.debug(
+                        "Failed to reset visibility for standard message: %s. Queue: %s, ReceiptHandle: %s",
+                        e, queue_url, rh
+                    )
+
+            messages = list(seen.values())
             return cors_response(200, messages)
 
         # DELETE /queues/{queueName}/messages

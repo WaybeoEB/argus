@@ -29,8 +29,8 @@ export const api = {
   purgeQueue: (name: string) => request(`/queues/${name}/purge`, { method: 'POST' }),
   sendMessage: (name: string, messageBody: string, opts?: { messageGroupId?: string; messageDeduplicationId?: string; delaySeconds?: number }) =>
     request(`/queues/${name}/messages`, { method: 'POST', body: JSON.stringify({ messageBody, ...opts }) }),
-  receiveMessages: (name: string, maxMessages = 5, waitTime = 0) =>
-    request(`/queues/${name}/messages?maxMessages=${maxMessages}&waitTime=${waitTime}`),
+  receiveMessages: (name: string, maxMessages = 10, waitTime = 0, maxPolls = 1) =>
+    request(`/queues/${name}/messages?maxMessages=${maxMessages}&waitTime=${waitTime}&maxPolls=${maxPolls}`),
   deleteMessage: (name: string, messageId: string) =>
     request(`/queues/${name}/messages`, { method: 'DELETE', body: JSON.stringify({ messageId }) }),
   editMessage: (name: string, messageBody: string, messageId: string, opts?: { messageGroupId?: string; messageDeduplicationId?: string }) =>
