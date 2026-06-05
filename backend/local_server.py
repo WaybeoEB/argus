@@ -2,7 +2,10 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
+import logging
 import app
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 class Handler(BaseHTTPRequestHandler):
     def _handle(self, method):
@@ -18,6 +21,7 @@ class Handler(BaseHTTPRequestHandler):
             'path': path,
             'queryStringParameters': qs or None,
             'body': body,
+            'headers': {k: v for k, v in self.headers.items()},
         }
         result = app.lambda_handler(event, None)
         self.send_response(result['statusCode'])
