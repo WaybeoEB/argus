@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -7,6 +8,39 @@ import uuid
 import boto3
 
 logger = logging.getLogger(__name__)
+
+def get_user_identity(event):
+    claims = event.get('requestContext', {}).get('authorizer', {}).get('claims', {}) or {}
+    if claims:
+        return claims.get('email') or claims.get('cognito:username') or claims.get('username') or 'unknown_user'
+    
+    headers = event.get('headers', {}) or {}
+    auth_header = None
+    for header_name, header_value in headers.items():
+        if header_name.lower() == 'authorization':
+            auth_header = header_value
+            break
+            
+    if auth_header:
+        parts = auth_header.split(' ')
+        token = parts[-1]
+        try:
+            token_parts = token.split('.')
+            if len(token_parts) == 3:
+                payload_b64 = token_parts[1]
+                payload_b64 += '=' * (4 - len(payload_b64) % 4)
+                payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                payload = json.loads(payload_bytes.decode('utf-8'))
+                return payload.get('email') or payload.get('cognito:username') or payload.get('username') or 'unknown_user'
+        except Exception as e:
+            logger.warning("Failed to decode Authorization header JWT: %s", e)
+            
+    return 'anonymous'
+
+# TODO: Refactor codebase logging to use a structured format (JSON/logfmt) in the future.
+def log_audit(event, action, queue, details):
+    user = get_user_identity(event)
+    logger.info("Audit: user=%s, action=%s, queue=%s, details=%s", user, action, queue, details)
 
 class Config:
     def __init__(self):
@@ -136,6 +170,7 @@ def lambda_handler(event, context):
             if name.endswith('.fifo'):
                 attrs.setdefault('FifoQueue', 'true')
             result = sqs.create_queue(QueueName=name, Attributes=attrs)
+            log_audit(event, 'create_queue', name, {'attributes': attrs, 'queueUrl': result['QueueUrl']})
             return cors_response(201, {'queueUrl': result['QueueUrl']})
 
         # Match /queues/{queueName}/**
@@ -154,11 +189,13 @@ def lambda_handler(event, context):
             if config.deactivate_delete:
                 return cors_response(403, {'error': 'Action not allowed'})
             sqs.delete_queue(QueueUrl=queue_url)
+            log_audit(event, 'delete_queue', queue_name, {})
             return cors_response(200, {'deleted': queue_name})
 
         # PUT /queues/{queueName}
         if method == 'PUT' and sub_path == '':
             sqs.set_queue_attributes(QueueUrl=queue_url, Attributes=body.get('attributes', {}))
+            log_audit(event, 'update_queue', queue_name, {'attributes': body.get('attributes', {})})
             return cors_response(200, {'updated': queue_name})
 
         # POST /queues/{queueName}/purge
@@ -166,6 +203,7 @@ def lambda_handler(event, context):
             if config.deactivate_purge:
                 return cors_response(403, {'error': 'Action not allowed'})
             sqs.purge_queue(QueueUrl=queue_url)
+            log_audit(event, 'purge_queue', queue_name, {})
             return cors_response(200, {'purged': queue_name})
 
         # POST /queues/{queueName}/messages
@@ -180,6 +218,12 @@ def lambda_handler(event, context):
             if body.get('delaySeconds') is not None:
                 kwargs['DelaySeconds'] = int(body['delaySeconds'])
             result = sqs.send_message(**kwargs)
+            log_audit(event, 'send_message', queue_name, {
+                'messageId': result['MessageId'],
+                'messageGroupId': kwargs.get('MessageGroupId'),
+                'messageDeduplicationId': kwargs.get('MessageDeduplicationId'),
+                'delaySeconds': kwargs.get('DelaySeconds')
+            })
             return cors_response(200, {'messageId': result['MessageId']})
 
         # GET /queues/{queueName}/messages (peek)
@@ -302,13 +346,15 @@ def lambda_handler(event, context):
                     return cors_response(500, {'error': f'Failed to delete message: {str(delete_error)}'})
                 if not found:
                     return cors_response(400, {'error': 'Could not find message to delete — it may have already been consumed'})
+                log_audit(event, 'delete_message', queue_name, {'messageId': message_id})
             else:
                 try:
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
                 except Exception as e:
                     logger.exception("Delete: failed to delete message by receiptHandle")
                     return cors_response(500, {'error': f'Failed to delete message: {str(e)}'})
-
+                log_audit(event, 'delete_message', queue_name, {'receiptHandle': receipt_handle})
+ 
             return cors_response(200, {'deleted': True})
 
         # PUT /queues/{queueName}/messages — atomic edit (delete old + send new)
@@ -385,6 +431,12 @@ def lambda_handler(event, context):
                 logger.exception("Edit partial failure: original deleted but new message send failed")
                 return cors_response(500, {'error': f'Original message deleted but re-send failed: {str(e)}'})
 
+            log_audit(event, 'edit_message', queue_name, {
+                'oldMessageId': message_id,
+                'newMessageId': result['MessageId'],
+                'messageGroupId': send_kwargs.get('MessageGroupId'),
+                'messageDeduplicationId': send_kwargs.get('MessageDeduplicationId')
+            })
             return cors_response(200, {'messageId': result['MessageId']})
 
         # POST /queues/{queueName}/redrive — move messages from DLQ back to source queue
@@ -446,6 +498,11 @@ def lambda_handler(event, context):
                     sqs.send_message(**send_kwargs)
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
                     moved += 1
+            log_audit(event, 'redrive_messages', queue_name, {
+                'sourceQueue': source_url.split('/')[-1],
+                'maxMessages': max_msgs,
+                'movedCount': moved
+            })
             return cors_response(200, {'moved': moved, 'sourceQueue': source_url.split('/')[-1]})
 
         # POST /queues/{queueName}/messages/batch
@@ -466,6 +523,11 @@ def lambda_handler(event, context):
                 result = sqs.send_message_batch(QueueUrl=queue_url, Entries=entries)
                 sent += len(result.get('Successful', []))
                 failed += len(result.get('Failed', []))
+            log_audit(event, 'batch_send_messages', queue_name, {
+                'sentCount': sent,
+                'failedCount': failed,
+                'totalCount': len(msgs)
+            })
             return cors_response(200, {'sent': sent, 'failed': failed})
 
         # POST /queues/{queueName}/export
@@ -480,6 +542,10 @@ def lambda_handler(event, context):
                 for msg in msgs:
                     sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
                     exported.append({'messageId': msg['MessageId'], 'body': msg['Body'], 'attributes': msg.get('Attributes', {})})
+            log_audit(event, 'export_messages', queue_name, {
+                'maxMessages': max_msgs,
+                'exportedCount': len(exported)
+            })
             return cors_response(200, exported)
 
         # POST /queues/{queueName}/import
@@ -494,6 +560,9 @@ def lambda_handler(event, context):
                     kwargs['MessageDeduplicationId'] = m.get('messageId', f'import-{sent}') + '-import'
                 sqs.send_message(**kwargs)
                 sent += 1
+            log_audit(event, 'import_messages', queue_name, {
+                'importedCount': sent
+            })
             return cors_response(200, {'imported': sent})
 
         # POST /queues/{queueName}/move
@@ -588,6 +657,11 @@ def lambda_handler(event, context):
                         'error': f'Message sent to target queue but deletion from source failed: {str(e)}',
                     })
 
+                log_audit(event, 'move_messages', queue_name, {
+                    'targetQueue': target_name,
+                    'messageId': message_id,
+                    'movedCount': 1
+                })
                 return cors_response(200, {'moved': 1, 'targetQueue': target_name})
 
             moved = 0
@@ -614,6 +688,11 @@ def lambda_handler(event, context):
                     sqs.send_message(**send_kwargs)
                     sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
                     moved += 1
+            log_audit(event, 'move_messages', queue_name, {
+                'targetQueue': target_name,
+                'maxMessages': max_msgs,
+                'movedCount': moved
+            })
             return cors_response(200, {'moved': moved, 'targetQueue': target_name})
 
         return cors_response(404, {'error': 'Not found'})
