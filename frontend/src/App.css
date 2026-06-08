@@ -108,3 +108,172 @@ tbody tr:nth-child(even) { background: #fafafa; }
 .login-form p { font-size: 13px; color: #666; text-align: center; }
 .login-form input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
 .login-form .btn { padding: 10px; font-size: 14px; }
+
+/* Clickable message cells and ID links */
+.msg-id-link {
+  color: #0066cc;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+.msg-id-link:hover {
+  color: #004499;
+  text-decoration: underline;
+}
+.body-cell {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.body-cell:hover {
+  background-color: #f0f7ff !important;
+}
+
+/* Custom Message Details Modal */
+.msg-detail-modal {
+  width: 700px;
+  max-width: 95vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.msg-detail-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+.msg-detail-modal .modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-detail-modal .close-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: #888;
+  padding: 4px;
+  line-height: 1;
+}
+.msg-detail-modal .close-btn:hover {
+  color: #333;
+}
+
+/* Modal Tabs */
+.tab-bar {
+  display: flex;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 16px;
+  gap: 16px;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 16px 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s ease;
+  outline: none;
+}
+.tab-btn:hover {
+  color: #0066cc;
+}
+.tab-btn.active {
+  color: #0066cc;
+  border-bottom: 2px solid #0066cc;
+  font-weight: 600;
+}
+
+.tab-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+}
+
+/* Body tab with copy button */
+.body-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.body-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.copy-btn {
+  background: #fff;
+  border: 1px solid #ccc;
+  color: #333;
+  transition: all 0.15s ease;
+}
+.copy-btn:hover {
+  background: #f5f5f5;
+  border-color: #adadad;
+}
+.copy-btn.copied {
+  background: #e8f5e9;
+  border-color: #a5d6a7;
+  color: #2e7d32;
+}
+.body-pre {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  padding: 16px;
+  overflow-x: auto;
+  max-height: 400px;
+  margin: 0;
+}
+.body-pre code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 13px;
+  color: #212529;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Custom & System Attribute Tables */
+.tab-table-wrapper {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.tab-table-wrapper table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.tab-table-wrapper th {
+  background: #f8f9fa;
+  font-weight: 600;
+  border-bottom: 1px solid #ddd;
+}
+.tab-table-wrapper td {
+  border-bottom: 1px solid #eee;
+}
+.tab-table-wrapper tr:last-child td {
+  border-bottom: none;
+}
+.no-data {
+  text-align: center;
+  color: #777;
+  font-style: italic;
+  padding: 32px 16px;
+  background: #fafafa;
+  border: 1px dashed #ddd;
+  border-radius: 4px;
+  margin: 0;
+}
+.font-semibold {
+  font-weight: 600;
+}
+

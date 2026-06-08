@@ -245,6 +245,7 @@ def lambda_handler(event, context):
                 result = sqs.receive_message(
                     QueueUrl=queue_url, MaxNumberOfMessages=batch_size,
                     WaitTimeSeconds=wait_seconds, AttributeNames=['All'],
+                    MessageAttributeNames=['All'],
                 )
                 msgs = result.get('Messages', [])
                 prev_messages_empty = not msgs
@@ -535,7 +536,11 @@ def lambda_handler(event, context):
             max_msgs = int(body.get('maxMessages', 100))
             exported = []
             while len(exported) < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - len(exported)), WaitTimeSeconds=0, AttributeNames=['All'])
+                batch = sqs.receive_message(
+                    QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - len(exported)),
+                    WaitTimeSeconds=0, AttributeNames=['All'],
+                    MessageAttributeNames=['All'],
+                )
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     break

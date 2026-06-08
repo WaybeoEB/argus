@@ -59,15 +59,28 @@ t "Still available after peek" "curl -sf '$API/queues/t-std/messages?maxMessages
 t "Batch send 3 msgs"          "curl -sf -X POST $API/queues/t-std/messages/batch -H 'Content-Type: application/json' -d '{\"messages\":[\"b1\",\"b2\",\"b3\"]}' | grep -q '\"sent\": 3'"
 t "FIFO send with group"       "curl -sf -X POST $API/queues/t-fifo.fifo/messages -H 'Content-Type: application/json' -d '{\"messageBody\":\"fm\",\"messageGroupId\":\"g1\",\"messageDeduplicationId\":\"d1\"}' | grep -q messageId"
 
+# Isolated test for message attributes
+curl -sf -X POST $API/queues -H 'Content-Type: application/json' -d '{"name":"t-attrs"}' > /dev/null
+T_ATTRS_URL=$(curl -sf "$API/queues" | python3 -c "import sys,json; print([q['url'] for q in json.load(sys.stdin)['queues'] if q['name']=='t-attrs'][0])")
+if echo "$API" | grep -q "localhost"; then
+  T_ATTRS_URL=$(echo "$T_ATTRS_URL" | sed -E 's/[^/:]+(:[0-9]+)?/localhost:4566/2')
+else
+  T_ATTRS_URL=$(echo "$T_ATTRS_URL" | sed -E 's/[^/:]+(:[0-9]+)?/localstack:4566/2')
+fi
+curl -sf -X POST "$T_ATTRS_URL" -d "Action=SendMessage&MessageBody=with-attrs&MessageAttribute.1.Name=testAttr&MessageAttribute.1.Value.DataType=String&MessageAttribute.1.Value.StringValue=testVal" > /dev/null
+t "Attributes returned on peek"   "curl -sf '$API/queues/t-attrs/messages?maxMessages=10&waitTime=1' | python3 -c \"import sys,json; msgs=json.load(sys.stdin); m=[x for x in msgs if x['Body']=='with-attrs'][0]; assert m['MessageAttributes']['testAttr']['StringValue']=='testVal'\""
+
+
 echo ""
 echo "--- Delete Message ---"
-DEL_MSG_ID=$(curl -sf -X POST "$API/queues/t-std/messages" -H 'Content-Type: application/json' -d '{"messageBody":"delete-me"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
+curl -sf -X POST $API/queues -H 'Content-Type: application/json' -d '{"name":"t-del"}' > /dev/null
+DEL_MSG_ID=$(curl -sf -X POST "$API/queues/t-del/messages" -H 'Content-Type: application/json' -d '{"messageBody":"delete-me"}' 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['messageId'])" 2>/dev/null || echo "")
 if [ -n "$DEL_MSG_ID" ]; then
   sleep 1
   if [ "$DEACTIVATE_DELETE_MESSAGES_LC" = "true" ]; then
-    t "Delete message blocked"   "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"$DEL_MSG_ID\"}' | grep -q 403"
+    t "Delete message blocked"   "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-del/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"$DEL_MSG_ID\"}' | grep -q 403"
   else
-    t "Delete single message"    "curl -sf -X DELETE $API/queues/t-std/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"$DEL_MSG_ID\"}' | grep -q deleted"
+    t "Delete single message"    "curl -sf -X DELETE $API/queues/t-del/messages -H 'Content-Type: application/json' -d '{\"messageId\":\"$DEL_MSG_ID\"}' | grep -q deleted"
   fi
 else
   echo "  ⚠️  Skip delete (no messageId)"; FAIL=$((FAIL+1))
@@ -194,7 +207,7 @@ fi
 
 echo ""
 echo "--- Cleanup ---"
-for q in t-std t-fifo.fifo t-dlq t-src t-target t-peek t-peek-fifo.fifo; do
+for q in t-std t-fifo.fifo t-dlq t-src t-target t-peek t-peek-fifo.fifo t-attrs t-del; do
   curl -s -X DELETE "$API/queues/$q" > /dev/null 2>&1 || true
 done
 echo "  🧹 Test queues cleaned up"

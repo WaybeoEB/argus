@@ -16,6 +16,7 @@ interface Message {
   Body: string
   ReceiptHandle: string
   Attributes?: Record<string, string>
+  MessageAttributes?: Record<string, { DataType: string; StringValue?: string; BinaryValue?: string }>
   MD5OfBody?: string
 }
 
@@ -61,6 +62,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   const [peekLoading, setPeekLoading] = useState(false)
   const [sortField, setSortField] = useState<SortField>('SentTimestamp')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [viewMsgDetail, setViewMsgDetail] = useState<Message | null>(null)
+  const [detailTab, setDetailTab] = useState<'body' | 'attributes' | 'details'>('body')
+  const [copied, setCopied] = useState(false)
 
   const showSuccess = (msg: string) => { setSuccess(msg); setTimeout(() => setSuccess(''), 4000) }
 
@@ -547,12 +551,35 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                       <tbody>
                         {filteredMessages.map(m => (
                           <tr key={m.MessageId}>
-                            <td className="mono">{m.MessageId.slice(0, 12)}…</td>
-                            <td className="mono">{m.Body.length > 100 ? m.Body.slice(0, 100) + '…' : m.Body}</td>
+                            <td className="mono">
+                              <a
+                                href="#"
+                                className="msg-id-link"
+                                onClick={e => {
+                                  e.preventDefault();
+                                  setViewMsgDetail(m);
+                                  setDetailTab('body');
+                                }}
+                                title="Click to view message details"
+                              >
+                                {m.MessageId.slice(0, 12)}…
+                              </a>
+                            </td>
+                            <td 
+                              className="mono body-cell"
+                              onClick={() => {
+                                setViewMsgDetail(m);
+                                setDetailTab('body');
+                              }}
+                              title="Click to view message details"
+                            >
+                              {m.Body.length > 100 ? m.Body.slice(0, 100) + '…' : m.Body}
+                            </td>
                             {isFifo && <td className="mono">{m.Attributes?.MessageGroupId || '-'}</td>}
                             <td>{m.Attributes?.SentTimestamp ? new Date(Number(m.Attributes.SentTimestamp)).toLocaleString() : '-'}</td>
                             <td>
                               <div className="btn-row">
+                                <button className="btn small" onClick={() => { setViewMsgDetail(m); setDetailTab('body'); }}>View</button>
                                 <button className="btn primary small" onClick={() => setEditMsgModal({
                                   original: m,
                                   body: m.Body,
@@ -579,6 +606,137 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           </>
         )}
       </main>
+
+      {viewMsgDetail && (
+        <div className="modal-overlay" onClick={() => setViewMsgDetail(null)}>
+          <div className="modal msg-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Received message: {viewMsgDetail.MessageId}</h3>
+              <button className="close-btn" onClick={() => setViewMsgDetail(null)}>✕</button>
+            </div>
+            
+            <div className="tab-bar">
+              <button 
+                className={`tab-btn ${detailTab === 'body' ? 'active' : ''}`}
+                onClick={() => setDetailTab('body')}
+              >
+                Body
+              </button>
+              <button 
+                className={`tab-btn ${detailTab === 'attributes' ? 'active' : ''}`}
+                onClick={() => setDetailTab('attributes')}
+              >
+                Attributes ({Object.keys(viewMsgDetail.MessageAttributes || {}).length})
+              </button>
+              <button 
+                className={`tab-btn ${detailTab === 'details' ? 'active' : ''}`}
+                onClick={() => setDetailTab('details')}
+              >
+                Details
+              </button>
+            </div>
+
+            <div className="tab-content">
+              {detailTab === 'body' && (
+                <div className="body-tab">
+                  <div className="body-actions">
+                    <button 
+                      className={`btn small copy-btn ${copied ? 'copied' : ''}`}
+                      onClick={() => {
+                        navigator.clipboard.writeText(viewMsgDetail.Body);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }}
+                    >
+                      {copied ? '✅ Copied!' : '📋 Copy Content'}
+                    </button>
+                  </div>
+                  <pre className="body-pre">
+                    <code>
+                      {(() => {
+                        try {
+                          const parsed = JSON.parse(viewMsgDetail.Body);
+                          return JSON.stringify(parsed, null, 2);
+                        } catch (e) {
+                          return viewMsgDetail.Body;
+                        }
+                      })()}
+                    </code>
+                  </pre>
+                </div>
+              )}
+
+              {detailTab === 'attributes' && (
+                <div className="attributes-tab">
+                  {viewMsgDetail.MessageAttributes && Object.keys(viewMsgDetail.MessageAttributes).length > 0 ? (
+                    <div className="tab-table-wrapper">
+                      <table className="attrs-table">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(viewMsgDetail.MessageAttributes).map(([name, attr]) => (
+                            <tr key={name}>
+                              <td className="mono font-semibold">{name}</td>
+                              <td className="mono">{attr.DataType}</td>
+                              <td className="mono">{attr.StringValue ?? (attr.BinaryValue ? `[Binary] ${attr.BinaryValue}` : '-')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="no-data">No message attributes found.</p>
+                  )}
+                </div>
+              )}
+
+              {detailTab === 'details' && (
+                <div className="details-tab">
+                  {viewMsgDetail.Attributes && Object.keys(viewMsgDetail.Attributes).length > 0 ? (
+                    <div className="tab-table-wrapper">
+                      <table className="details-table">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(viewMsgDetail.Attributes).map(([name, val]) => {
+                            let displayVal = val;
+                            if (name === 'SentTimestamp' || name === 'ApproximateFirstReceiveTimestamp') {
+                              try {
+                                displayVal = `${val} (${new Date(Number(val)).toLocaleString()})`;
+                              } catch (_) {}
+                            }
+                            return (
+                              <tr key={name}>
+                                <td className="mono">{name}</td>
+                                <td className="mono">{displayVal}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="no-data">No system attributes found.</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: 20 }}>
+              <button className="btn primary" onClick={() => setViewMsgDetail(null)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmModal && (
         <ConfirmModal
