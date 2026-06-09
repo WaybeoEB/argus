@@ -282,3 +282,29 @@ tbody tr:nth-child(even) { background: #fafafa; }
   font-weight: 600;
 }
 
+/* Move progress bar */
+.move-progress {
+  margin-top: 10px;
+  max-width: 500px;
+}
+.progress-bar {
+  height: 20px;
+  background: #e9ecef;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #e67e22, #f39c12);
+  border-radius: 10px;
+  transition: width 0.3s ease;
+  min-width: 0;
+}
+.progress-text {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}

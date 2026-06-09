@@ -310,19 +310,39 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   }
 
   // --- Feature 1: Move Messages ---
+  const [moveLoading, setMoveLoading] = useState(false)
+  const [moveProgress, setMoveProgress] = useState<{ moved: number; total: number } | null>(null)
+
   const handleMove = async () => {
     if (!selected || !moveTarget) return
     setConfirmModal({
       title: '🔀 Move Messages',
-      message: `This will move all messages from "${selected.name}" to "${moveTarget}". Messages will be removed from the source queue.`,
+      message: `This will move ALL messages from "${selected.name}" to "${moveTarget}". Messages are processed in batches — there is no upper limit.`,
       confirmText: 'Move All',
       onConfirm: async () => {
         setConfirmModal(null)
+        setMoveLoading(true)
+        const estimatedTotal = parseInt(selected.attributes.ApproximateNumberOfMessages || '0', 10)
+        setMoveProgress({ moved: 0, total: estimatedTotal })
         try {
-          const r = await api.moveMessages(selected.name, moveTarget, 100)
+          let totalMoved = 0
+          const maxBatches = 1000
+          let batch = 0
+          while (batch < maxBatches) {
+            batch++
+            const r = await api.moveMessages(selected.name, moveTarget, 100)
+            totalMoved += r.moved
+            setMoveProgress({ moved: totalMoved, total: estimatedTotal })
+            if (r.moved === 0) break
+          }
           setMessages([]); await loadQueues()
-          showSuccess(`${r.moved} message(s) moved to "${r.targetQueue}"`)
+          if (batch >= maxBatches) {
+            setError(`Move stopped after ${maxBatches} batches — ${totalMoved} moved so far. Run again to continue.`)
+          } else {
+            showSuccess(`${totalMoved} message(s) moved to "${moveTarget}"`)
+          }
         } catch (e: any) { setError(e.message) }
+        finally { setMoveLoading(false); setMoveProgress(null) }
       },
     })
   }
@@ -546,8 +566,24 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                     <option key={q.name} value={q.name}>{q.name}</option>
                   ))}
                 </select>
-                <button className="btn warning" onClick={handleMove} disabled={!moveTarget}>Move All</button>
+                <button className="btn warning" onClick={handleMove} disabled={!moveTarget || moveLoading}>
+                  {moveLoading ? '⏳ Moving…' : 'Move All'}
+                </button>
               </div>
+              {moveProgress && (
+                <div className="move-progress">
+                  <div className="progress-bar">
+                    <div
+                      className="progress-fill"
+                      style={{ width: `${moveProgress.total > 0 ? Math.min(100, (moveProgress.moved / moveProgress.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <span className="progress-text">
+                    {moveProgress.moved.toLocaleString()} / {moveProgress.total > 0 ? `~${moveProgress.total.toLocaleString()}` : '?'} messages
+                    {moveProgress.total > 0 && ` (${Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100))}%)`}
+                  </span>
+                </div>
+              )}
             </section>
 
             <section>
