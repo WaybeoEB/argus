@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useState} from 'react'
+import {useCallback, useEffect, useState, useRef} from 'react'
 import {api} from './api'
 import Dashboard from './Dashboard'
 import ConfirmModal from './ConfirmModal'
@@ -227,6 +227,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   }
 
   const [redriveLoading, setRedriveLoading] = useState(false)
+  const redriveCancelRef = useRef(false)
 
   const handleRedrive = async () => {
     if (!selected) return
@@ -237,6 +238,8 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
       onConfirm: async () => {
         setConfirmModal(null)
         setRedriveLoading(true)
+        redriveCancelRef.current = false
+        const startTimestamp = Date.now()
         try {
           let totalMoved = 0
           let totalFailed = 0
@@ -245,8 +248,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           let batch = 0
           // Loop in batches of 100 until the backend reports 0 moved
           while (batch < maxBatches) {
+            if (redriveCancelRef.current) break
             batch++
-            const r = await api.redriveMessages(selected.name, 100)
+            const r = await api.redriveMessages(selected.name, 100, startTimestamp)
             sourceQueue = r.sourceQueue
             totalMoved += r.moved
             totalFailed += (r.failed || 0)
@@ -254,7 +258,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           }
           setMessages([]); await loadQueues()
           const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
-          if (batch >= maxBatches) {
+          if (redriveCancelRef.current) {
+            setError(`Redrive cancelled by user — ${totalMoved} moved so far${failMsg}.`)
+          } else if (batch >= maxBatches) {
             setError(`Redrive stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
           } else {
             showSuccess(`${totalMoved} message(s) moved to "${sourceQueue}"${failMsg}`)
@@ -312,6 +318,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   // --- Feature 1: Move Messages ---
   const [moveLoading, setMoveLoading] = useState(false)
   const [moveProgress, setMoveProgress] = useState<{ moved: number; failed: number; total: number } | null>(null)
+  const moveCancelRef = useRef(false)
 
   const handleMove = async () => {
     if (!selected || !moveTarget) return
@@ -322,6 +329,8 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
       onConfirm: async () => {
         setConfirmModal(null)
         setMoveLoading(true)
+        moveCancelRef.current = false
+        const startTimestamp = Date.now()
         const estimatedTotal = parseInt(selected.attributes.ApproximateNumberOfMessages || '0', 10)
         setMoveProgress({ moved: 0, failed: 0, total: estimatedTotal })
         try {
@@ -330,8 +339,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           const maxBatches = 1000
           let batch = 0
           while (batch < maxBatches) {
+            if (moveCancelRef.current) break
             batch++
-            const r = await api.moveMessages(selected.name, moveTarget, 100)
+            const r = await api.moveMessages(selected.name, moveTarget, 100, undefined, startTimestamp)
             totalMoved += r.moved
             totalFailed += (r.failed || 0)
             setMoveProgress({ moved: totalMoved, failed: totalFailed, total: estimatedTotal })
@@ -339,7 +349,9 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           }
           setMessages([]); await loadQueues()
           const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
-          if (batch >= maxBatches) {
+          if (moveCancelRef.current) {
+            setError(`Move cancelled by user — ${totalMoved} moved so far${failMsg}.`)
+          } else if (batch >= maxBatches) {
             setError(`Move stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
           } else {
             if (totalFailed > 0) {
@@ -507,9 +519,19 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
               <section className="redrive-section">
                 <h3>⚠️ This is a Dead Letter Queue</h3>
                 <p>Messages here failed processing from the source queue. Redrive will move all messages back in batches — no message limit.</p>
-                <button className="btn warning" onClick={handleRedrive} disabled={redriveLoading}>
-                  {redriveLoading ? '⏳ Redriving…' : '🔄 Redrive all to source queue'}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <button className="btn warning" onClick={handleRedrive} disabled={redriveLoading}>
+                    {redriveLoading ? '⏳ Redriving…' : '🔄 Redrive all to source queue'}
+                  </button>
+                  {redriveLoading && (
+                    <button
+                      className="btn primary small"
+                      onClick={() => { redriveCancelRef.current = true }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </section>
             )}
 
@@ -593,11 +615,19 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                       style={{ width: `${moveProgress.total > 0 ? Math.min(100, (moveProgress.moved / moveProgress.total) * 100) : 0}%` }}
                     />
                   </div>
-                  <span className="progress-text" id="move-progress-text">
-                    {moveProgress.moved.toLocaleString()} / {moveProgress.total > 0 ? `~${moveProgress.total.toLocaleString()}` : '?'} messages
-                    {moveProgress.total > 0 && ` (${Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100))}%)`}
-                    {moveProgress.failed > 0 && ` (${moveProgress.failed} failed)`}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                    <span className="progress-text" id="move-progress-text">
+                      {moveProgress.moved.toLocaleString()} / {moveProgress.total > 0 ? `~${moveProgress.total.toLocaleString()}` : '?'} messages
+                      {moveProgress.total > 0 && ` (${Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100))}%)`}
+                      {moveProgress.failed > 0 && ` (${moveProgress.failed} failed)`}
+                    </span>
+                    <button
+                      className="btn primary small"
+                      onClick={() => { moveCancelRef.current = true }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </section>
