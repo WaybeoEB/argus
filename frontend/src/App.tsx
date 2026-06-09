@@ -579,13 +579,21 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
               </div>
               {moveProgress && (
                 <div className="move-progress">
-                  <div className="progress-bar">
+                  <div
+                    className="progress-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={moveProgress.total > 0 ? Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100)) : undefined}
+                    aria-busy={moveProgress.total === 0 ? true : undefined}
+                    aria-labelledby="move-progress-text"
+                  >
                     <div
                       className="progress-fill"
                       style={{ width: `${moveProgress.total > 0 ? Math.min(100, (moveProgress.moved / moveProgress.total) * 100) : 0}%` }}
                     />
                   </div>
-                  <span className="progress-text">
+                  <span className="progress-text" id="move-progress-text">
                     {moveProgress.moved.toLocaleString()} / {moveProgress.total > 0 ? `~${moveProgress.total.toLocaleString()}` : '?'} messages
                     {moveProgress.total > 0 && ` (${Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100))}%)`}
                     {moveProgress.failed > 0 && ` (${moveProgress.failed} failed)`}

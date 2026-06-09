@@ -747,8 +747,8 @@ def lambda_handler(event, context):
                     if msg_id in seen_ids:
                         try:
                             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Move: failed to delete duplicate message %s (ReceiptHandle: %s) from queue %s: %s", msg_id, msg['ReceiptHandle'], queue_url, e, exc_info=True)
                         continue
 
                     send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg['Body']}
@@ -762,19 +762,19 @@ def lambda_handler(event, context):
                     try:
                         sqs.send_message(**send_kwargs)
                     except Exception as e:
-                        logger.error("Move: failed to send message %s: %s", msg_id, e, exc_info=True)
+                        logger.exception("Move: failed to send message %s", msg_id)
                         failed += 1
                         try:
                             sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
                         except Exception as vis_err:
-                            logger.error("Move: failed to restore visibility: %s", vis_err)
+                            logger.exception("Move: failed to restore visibility for %s", msg.get('MessageId', '<unknown>'))
                         continue
 
                     seen_ids.add(msg_id)
                     try:
                         sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
                     except Exception as e:
-                        logger.error("Move: sent to target but failed to delete from source: %s (message %s)", e, msg_id, exc_info=True)
+                        logger.exception("Move: sent to target but failed to delete from source: message %s", msg_id)
                     moved += 1
             log_audit(event, 'move_messages', queue_name, {
                 'targetQueue': target_name,
