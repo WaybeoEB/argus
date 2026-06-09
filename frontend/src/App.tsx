@@ -326,6 +326,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
       title: '🔀 Move Messages',
       message: `This will move ALL messages from "${selected.name}" to "${moveTarget}". Messages are processed in batches — there is no upper limit.`,
       confirmText: 'Move All',
+      typeToConfirm: moveTarget,
       onConfirm: async () => {
         setConfirmModal(null)
         setMoveLoading(true)

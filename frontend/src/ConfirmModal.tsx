@@ -30,6 +30,7 @@ export default function ConfirmModal({ title, message, confirmText = 'Confirm', 
           <div className="modal-type-confirm">
             <p>Type <strong>{typeToConfirm}</strong> to confirm:</p>
             <input value={input} onChange={e => setInput(e.target.value)} autoFocus
+              onPaste={e => e.preventDefault()}
               placeholder={typeToConfirm} />
           </div>
         )}
