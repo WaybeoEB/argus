@@ -162,7 +162,7 @@ t "DLQ empty after redrive"    "curl -sf $API/queues | python3 -c \"import sys,j
 # Backwards-compat: maxMessages still caps the redrive
 curl -sf -X POST "$API/queues/t-dlq/messages" -H 'Content-Type: application/json' -d '{"messageBody":"dead-limited"}' > /dev/null 2>&1 || true
 sleep 1
-t "Redrive with maxMessages"   "curl -sf -X POST $API/queues/t-dlq/redrive -H 'Content-Type: application/json' -d '{\"maxMessages\":10}' | grep -q t-src"
+t "Redrive with maxMessages"   "curl -sf -X POST $API/queues/t-dlq/redrive -H 'Content-Type: application/json' -d '{\"maxMessages\":10}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']>=1, f'expected >=1, got {d[\\\"moved\\\"]}';assert d['sourceQueue']=='t-src', f'expected t-src, got {d[\\\"sourceQueue\\\"]}'\"" 
 
 echo ""
 echo "--- Pagination & Search ---"

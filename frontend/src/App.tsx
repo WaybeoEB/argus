@@ -241,8 +241,11 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           let totalMoved = 0
           let totalFailed = 0
           let sourceQueue = ''
+          const maxBatches = 1000 // Safety cap: 1000 × 100 = 100k messages max
+          let batch = 0
           // Loop in batches of 100 until the backend reports 0 moved
-          while (true) {
+          while (batch < maxBatches) {
+            batch++
             const r = await api.redriveMessages(selected.name, 100)
             sourceQueue = r.sourceQueue
             totalMoved += r.moved
@@ -251,7 +254,11 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
           }
           setMessages([]); await loadQueues()
           const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
-          showSuccess(`${totalMoved} message(s) moved to "${sourceQueue}"${failMsg}`)
+          if (batch >= maxBatches) {
+            setError(`Redrive stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
+          } else {
+            showSuccess(`${totalMoved} message(s) moved to "${sourceQueue}"${failMsg}`)
+          }
         } catch (e: any) { setError(e.message) }
         finally { setRedriveLoading(false) }
       },
