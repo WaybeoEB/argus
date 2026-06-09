@@ -226,19 +226,41 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     } catch (e: any) { setError(e.message) }
   }
 
+  const [redriveLoading, setRedriveLoading] = useState(false)
+
   const handleRedrive = async () => {
     if (!selected) return
     setConfirmModal({
       title: '🔄 Redrive Messages',
-      message: `This will move all messages from "${selected.name}" back to the source queue.`,
-      confirmText: 'Redrive',
+      message: `This will move ALL messages from "${selected.name}" back to the source queue. Messages are processed in batches — there is no upper limit.`,
+      confirmText: 'Redrive All',
       onConfirm: async () => {
         setConfirmModal(null)
+        setRedriveLoading(true)
         try {
-          const r = await api.redriveMessages(selected.name, 100)
+          let totalMoved = 0
+          let totalFailed = 0
+          let sourceQueue = ''
+          const maxBatches = 1000 // Safety cap: 1000 × 100 = 100k messages max
+          let batch = 0
+          // Loop in batches of 100 until the backend reports 0 moved
+          while (batch < maxBatches) {
+            batch++
+            const r = await api.redriveMessages(selected.name, 100)
+            sourceQueue = r.sourceQueue
+            totalMoved += r.moved
+            totalFailed += (r.failed || 0)
+            if (r.moved === 0) break
+          }
           setMessages([]); await loadQueues()
-          showSuccess(`${r.moved} message(s) moved to "${r.sourceQueue}"`)
+          const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
+          if (batch >= maxBatches) {
+            setError(`Redrive stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
+          } else {
+            showSuccess(`${totalMoved} message(s) moved to "${sourceQueue}"${failMsg}`)
+          }
         } catch (e: any) { setError(e.message) }
+        finally { setRedriveLoading(false) }
       },
     })
   }
@@ -288,19 +310,46 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
   }
 
   // --- Feature 1: Move Messages ---
+  const [moveLoading, setMoveLoading] = useState(false)
+  const [moveProgress, setMoveProgress] = useState<{ moved: number; failed: number; total: number } | null>(null)
+
   const handleMove = async () => {
     if (!selected || !moveTarget) return
     setConfirmModal({
       title: '🔀 Move Messages',
-      message: `This will move all messages from "${selected.name}" to "${moveTarget}". Messages will be removed from the source queue.`,
+      message: `This will move ALL messages from "${selected.name}" to "${moveTarget}". Messages are processed in batches — there is no upper limit.`,
       confirmText: 'Move All',
       onConfirm: async () => {
         setConfirmModal(null)
+        setMoveLoading(true)
+        const estimatedTotal = parseInt(selected.attributes.ApproximateNumberOfMessages || '0', 10)
+        setMoveProgress({ moved: 0, failed: 0, total: estimatedTotal })
         try {
-          const r = await api.moveMessages(selected.name, moveTarget, 100)
+          let totalMoved = 0
+          let totalFailed = 0
+          const maxBatches = 1000
+          let batch = 0
+          while (batch < maxBatches) {
+            batch++
+            const r = await api.moveMessages(selected.name, moveTarget, 100)
+            totalMoved += r.moved
+            totalFailed += (r.failed || 0)
+            setMoveProgress({ moved: totalMoved, failed: totalFailed, total: estimatedTotal })
+            if (r.moved === 0) break
+          }
           setMessages([]); await loadQueues()
-          showSuccess(`${r.moved} message(s) moved to "${r.targetQueue}"`)
+          const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
+          if (batch >= maxBatches) {
+            setError(`Move stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
+          } else {
+            if (totalFailed > 0) {
+              setError(`${totalMoved} message(s) moved to "${moveTarget}"${failMsg}`)
+            } else {
+              showSuccess(`${totalMoved} message(s) moved to "${moveTarget}"`)
+            }
+          }
         } catch (e: any) { setError(e.message) }
+        finally { setMoveLoading(false); setMoveProgress(null) }
       },
     })
   }
@@ -457,8 +506,10 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
             {selected.isDeadLetterQueue && (
               <section className="redrive-section">
                 <h3>⚠️ This is a Dead Letter Queue</h3>
-                <p>Messages here failed processing from the source queue.</p>
-                <button className="btn warning" onClick={handleRedrive}>🔄 Redrive all to source queue</button>
+                <p>Messages here failed processing from the source queue. Redrive will move all messages back in batches — no message limit.</p>
+                <button className="btn warning" onClick={handleRedrive} disabled={redriveLoading}>
+                  {redriveLoading ? '⏳ Redriving…' : '🔄 Redrive all to source queue'}
+                </button>
               </section>
             )}
 
@@ -522,8 +573,33 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                     <option key={q.name} value={q.name}>{q.name}</option>
                   ))}
                 </select>
-                <button className="btn warning" onClick={handleMove} disabled={!moveTarget}>Move All</button>
+                <button className="btn warning" onClick={handleMove} disabled={!moveTarget || moveLoading}>
+                  {moveLoading ? '⏳ Moving…' : 'Move All'}
+                </button>
               </div>
+              {moveProgress && (
+                <div className="move-progress">
+                  <div
+                    className="progress-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={moveProgress.total > 0 ? Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100)) : undefined}
+                    aria-busy={moveProgress.total === 0 ? true : undefined}
+                    aria-labelledby="move-progress-text"
+                  >
+                    <div
+                      className="progress-fill"
+                      style={{ width: `${moveProgress.total > 0 ? Math.min(100, (moveProgress.moved / moveProgress.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <span className="progress-text" id="move-progress-text">
+                    {moveProgress.moved.toLocaleString()} / {moveProgress.total > 0 ? `~${moveProgress.total.toLocaleString()}` : '?'} messages
+                    {moveProgress.total > 0 && ` (${Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100))}%)`}
+                    {moveProgress.failed > 0 && ` (${moveProgress.failed} failed)`}
+                  </span>
+                </div>
+              )}
             </section>
 
             <section>

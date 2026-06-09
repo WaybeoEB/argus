@@ -476,11 +476,20 @@ def lambda_handler(event, context):
                 is_fifo = source_url.endswith('.fifo')
 
             moved = 0
+            failed = 0
             move_max_attempts = config.sqs_move_max_attempts
             poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
+            seen_ids = set()  # Track processed MessageIds to prevent duplicate delivery
             while moved < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=poll_wait, AttributeNames=['All'], MessageAttributeNames=['All'])
+                batch = sqs.receive_message(
+                    QueueUrl=queue_url,
+                    MaxNumberOfMessages=min(10, max_msgs - moved),
+                    WaitTimeSeconds=poll_wait,
+                    AttributeNames=['All'],
+                    MessageAttributeNames=['All'],
+                    VisibilityTimeout=300,  # 5 min: prevents re-delivery across frontend-driven batches
+                )
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     empty_receives += 1
@@ -489,6 +498,15 @@ def lambda_handler(event, context):
                     continue
                 empty_receives = 0
                 for msg in msgs:
+                    msg_id = msg['MessageId']
+                    # Skip if already processed (SQS standard queues may redeliver)
+                    if msg_id in seen_ids:
+                        try:
+                            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                        except Exception:
+                            pass
+                        continue
+
                     send_kwargs = {'QueueUrl': source_url, 'MessageBody': msg['Body']}
                     msg_msg_attrs = msg.get('MessageAttributes', {})
                     if msg_msg_attrs:
@@ -496,15 +514,40 @@ def lambda_handler(event, context):
                     if is_fifo:
                         send_kwargs['MessageGroupId'] = msg.get('Attributes', {}).get('MessageGroupId', 'redrive')
                         send_kwargs['MessageDeduplicationId'] = msg['MessageId'] + '-redrive'
-                    sqs.send_message(**send_kwargs)
-                    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+
+                    # Send first, then delete. Separate error handling ensures:
+                    # - Send failure → restore visibility (safe to retry)
+                    # - Delete failure after successful send → do NOT restore visibility
+                    #   (message already delivered; restoring would cause duplicate on retry)
+                    try:
+                        sqs.send_message(**send_kwargs)
+                    except Exception as e:
+                        logger.error("Redrive: failed to send message %s: %s", msg_id, e, exc_info=True)
+                        failed += 1
+                        try:
+                            sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                        except Exception as vis_err:
+                            logger.error("Redrive: failed to restore visibility: %s", vis_err)
+                        continue
+
+                    seen_ids.add(msg_id)
+                    try:
+                        sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                    except Exception as e:
+                        # Message was already sent to source — do NOT restore visibility.
+                        # It will stay invisible until the 300s timeout expires, then
+                        # the next batch would skip it via seen_ids (same invocation)
+                        # or it will eventually be re-received but that's safer than
+                        # a guaranteed duplicate.
+                        logger.error("Redrive: sent to source but failed to delete from DLQ: %s (message %s)", e, msg_id, exc_info=True)
                     moved += 1
             log_audit(event, 'redrive_messages', queue_name, {
                 'sourceQueue': source_url.split('/')[-1],
                 'maxMessages': max_msgs,
-                'movedCount': moved
+                'movedCount': moved,
+                'failedCount': failed
             })
-            return cors_response(200, {'moved': moved, 'sourceQueue': source_url.split('/')[-1]})
+            return cors_response(200, {'moved': moved, 'failed': failed, 'sourceQueue': source_url.split('/')[-1]})
 
         # POST /queues/{queueName}/messages/batch
         if method == 'POST' and sub_path == '/messages/batch':
@@ -678,11 +721,20 @@ def lambda_handler(event, context):
                 return cors_response(200, {'moved': 1, 'targetQueue': target_name})
 
             moved = 0
+            failed = 0
             move_max_attempts = config.sqs_move_max_attempts
             poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
+            seen_ids = set()
             while moved < max_msgs:
-                batch = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - moved), WaitTimeSeconds=poll_wait, AttributeNames=['All'], MessageAttributeNames=['All'])
+                batch = sqs.receive_message(
+                    QueueUrl=queue_url,
+                    MaxNumberOfMessages=min(10, max_msgs - moved),
+                    WaitTimeSeconds=poll_wait,
+                    AttributeNames=['All'],
+                    MessageAttributeNames=['All'],
+                    VisibilityTimeout=300,
+                )
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     empty_receives += 1
@@ -691,6 +743,14 @@ def lambda_handler(event, context):
                     continue
                 empty_receives = 0
                 for msg in msgs:
+                    msg_id = msg['MessageId']
+                    if msg_id in seen_ids:
+                        try:
+                            sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                        except Exception as e:
+                            logger.debug("Move: failed to delete duplicate message %s (ReceiptHandle: %s) from queue %s: %s", msg_id, msg['ReceiptHandle'], queue_url, e, exc_info=True)
+                        continue
+
                     send_kwargs = {'QueueUrl': target_url, 'MessageBody': msg['Body']}
                     msg_msg_attrs = msg.get('MessageAttributes', {})
                     if msg_msg_attrs:
@@ -698,15 +758,31 @@ def lambda_handler(event, context):
                     if is_target_fifo:
                         send_kwargs['MessageGroupId'] = msg.get('Attributes', {}).get('MessageGroupId', 'move')
                         send_kwargs['MessageDeduplicationId'] = msg['MessageId'] + '-move'
-                    sqs.send_message(**send_kwargs)
-                    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+
+                    try:
+                        sqs.send_message(**send_kwargs)
+                    except Exception as e:
+                        logger.exception("Move: failed to send message %s", msg_id)
+                        failed += 1
+                        try:
+                            sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                        except Exception as vis_err:
+                            logger.exception("Move: failed to restore visibility for %s", msg.get('MessageId', '<unknown>'))
+                        continue
+
+                    seen_ids.add(msg_id)
+                    try:
+                        sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                    except Exception as e:
+                        logger.exception("Move: sent to target but failed to delete from source: message %s", msg_id)
                     moved += 1
             log_audit(event, 'move_messages', queue_name, {
                 'targetQueue': target_name,
                 'maxMessages': max_msgs,
-                'movedCount': moved
+                'movedCount': moved,
+                'failedCount': failed
             })
-            return cors_response(200, {'moved': moved, 'targetQueue': target_name})
+            return cors_response(200, {'moved': moved, 'failed': failed, 'targetQueue': target_name})
 
         return cors_response(404, {'error': 'Not found'})
 

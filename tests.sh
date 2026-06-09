@@ -150,8 +150,19 @@ SRC_BODY=$(python3 -c "import json;print(json.dumps({'name':'t-src','attributes'
 curl -sf -X POST "$API/queues" -H 'Content-Type: application/json' -d "$SRC_BODY" > /dev/null 2>&1 || true
 t "DLQ detected"               "curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-dlq'][0];assert q['isDeadLetterQueue']==True\""
 t "Source shows dlqName"       "curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-src'][0];assert q.get('dlqName')=='t-dlq'\""
-curl -sf -X POST "$API/queues/t-dlq/messages" -H 'Content-Type: application/json' -d '{"messageBody":"dead"}' > /dev/null 2>&1 || true
-t "Redrive DLQ→source"         "curl -sf -X POST $API/queues/t-dlq/redrive -H 'Content-Type: application/json' -d '{\"maxMessages\":10}' | grep -q t-src"
+
+# Push 15 messages into the DLQ to test batched redrive (bypasses the old 10-message default)
+for i in $(seq 1 15); do
+  curl -sf -X POST "$API/queues/t-dlq/messages" -H 'Content-Type: application/json' -d "{\"messageBody\":\"dead-$i\"}" > /dev/null 2>&1 || true
+done
+sleep 1
+t "Redrive batch DLQ→source"   "curl -sf -X POST $API/queues/t-dlq/redrive -H 'Content-Type: application/json' -d '{\"maxMessages\":100}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']>=15, f'expected >=15 moved, got {d[\\\"moved\\\"]}';assert 'sourceQueue' in d\""
+t "DLQ empty after redrive"    "curl -sf $API/queues | python3 -c \"import sys,json;q=[x for x in json.load(sys.stdin)['queues'] if x['name']=='t-dlq'][0];assert int(q['attributes']['ApproximateNumberOfMessages'])==0, f'expected 0, got {q[\\\"attributes\\\"][\\\"ApproximateNumberOfMessages\\\"]}'\""
+
+# Backwards-compat: maxMessages still caps the redrive
+curl -sf -X POST "$API/queues/t-dlq/messages" -H 'Content-Type: application/json' -d '{"messageBody":"dead-limited"}' > /dev/null 2>&1 || true
+sleep 1
+t "Redrive with maxMessages"   "curl -sf -X POST $API/queues/t-dlq/redrive -H 'Content-Type: application/json' -d '{\"maxMessages\":10}' | python3 -c \"import sys,json;d=json.load(sys.stdin);assert d['moved']>=1, f'expected >=1, got {d[\\\"moved\\\"]}';assert d['sourceQueue']=='t-src', f'expected t-src, got {d[\\\"sourceQueue\\\"]}'\"" 
 
 echo ""
 echo "--- Pagination & Search ---"
