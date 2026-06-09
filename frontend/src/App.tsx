@@ -226,19 +226,34 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
     } catch (e: any) { setError(e.message) }
   }
 
+  const [redriveLoading, setRedriveLoading] = useState(false)
+
   const handleRedrive = async () => {
     if (!selected) return
     setConfirmModal({
       title: '🔄 Redrive Messages',
-      message: `This will move all messages from "${selected.name}" back to the source queue.`,
-      confirmText: 'Redrive',
+      message: `This will move ALL messages from "${selected.name}" back to the source queue. Messages are processed in batches — there is no upper limit.`,
+      confirmText: 'Redrive All',
       onConfirm: async () => {
         setConfirmModal(null)
+        setRedriveLoading(true)
         try {
-          const r = await api.redriveMessages(selected.name, 100)
+          let totalMoved = 0
+          let totalFailed = 0
+          let sourceQueue = ''
+          // Loop in batches of 100 until the backend reports 0 moved
+          while (true) {
+            const r = await api.redriveMessages(selected.name, 100)
+            sourceQueue = r.sourceQueue
+            totalMoved += r.moved
+            totalFailed += (r.failed || 0)
+            if (r.moved === 0) break
+          }
           setMessages([]); await loadQueues()
-          showSuccess(`${r.moved} message(s) moved to "${r.sourceQueue}"`)
+          const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
+          showSuccess(`${totalMoved} message(s) moved to "${sourceQueue}"${failMsg}`)
         } catch (e: any) { setError(e.message) }
+        finally { setRedriveLoading(false) }
       },
     })
   }
@@ -457,8 +472,10 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
             {selected.isDeadLetterQueue && (
               <section className="redrive-section">
                 <h3>⚠️ This is a Dead Letter Queue</h3>
-                <p>Messages here failed processing from the source queue.</p>
-                <button className="btn warning" onClick={handleRedrive}>🔄 Redrive all to source queue</button>
+                <p>Messages here failed processing from the source queue. Redrive will move all messages back in batches — no message limit.</p>
+                <button className="btn warning" onClick={handleRedrive} disabled={redriveLoading}>
+                  {redriveLoading ? '⏳ Redriving…' : '🔄 Redrive all to source queue'}
+                </button>
               </section>
             )}
 

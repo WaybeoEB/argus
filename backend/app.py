@@ -476,6 +476,7 @@ def lambda_handler(event, context):
                 is_fifo = source_url.endswith('.fifo')
 
             moved = 0
+            failed = 0
             move_max_attempts = config.sqs_move_max_attempts
             poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
@@ -496,15 +497,24 @@ def lambda_handler(event, context):
                     if is_fifo:
                         send_kwargs['MessageGroupId'] = msg.get('Attributes', {}).get('MessageGroupId', 'redrive')
                         send_kwargs['MessageDeduplicationId'] = msg['MessageId'] + '-redrive'
-                    sqs.send_message(**send_kwargs)
-                    sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
-                    moved += 1
+                    try:
+                        sqs.send_message(**send_kwargs)
+                        sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
+                        moved += 1
+                    except Exception as e:
+                        logger.error("Redrive: failed to move message %s: %s", msg.get('MessageId'), e, exc_info=True)
+                        failed += 1
+                        try:
+                            sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                        except Exception as vis_err:
+                            logger.error("Redrive: failed to restore visibility: %s", vis_err)
             log_audit(event, 'redrive_messages', queue_name, {
                 'sourceQueue': source_url.split('/')[-1],
                 'maxMessages': max_msgs,
-                'movedCount': moved
+                'movedCount': moved,
+                'failedCount': failed
             })
-            return cors_response(200, {'moved': moved, 'sourceQueue': source_url.split('/')[-1]})
+            return cors_response(200, {'moved': moved, 'failed': failed, 'sourceQueue': source_url.split('/')[-1]})
 
         # POST /queues/{queueName}/messages/batch
         if method == 'POST' and sub_path == '/messages/batch':

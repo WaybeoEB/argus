@@ -35,7 +35,7 @@ export const api = {
     request(`/queues/${name}/messages`, { method: 'DELETE', body: JSON.stringify({ messageId }) }),
   editMessage: (name: string, messageBody: string, messageId: string, opts?: { messageGroupId?: string; messageDeduplicationId?: string }) =>
     request(`/queues/${name}/messages`, { method: 'PUT', body: JSON.stringify({ messageBody, messageId, ...opts }) }),
-  redriveMessages: (name: string, maxMessages = 10) =>
+  redriveMessages: (name: string, maxMessages = 100) =>
     request(`/queues/${name}/redrive`, { method: 'POST', body: JSON.stringify({ maxMessages }) }),
   sendBatch: (name: string, messages: any[]) =>
     request(`/queues/${name}/messages/batch`, { method: 'POST', body: JSON.stringify({ messages }) }),
