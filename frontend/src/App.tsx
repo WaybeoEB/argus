@@ -311,7 +311,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
 
   // --- Feature 1: Move Messages ---
   const [moveLoading, setMoveLoading] = useState(false)
-  const [moveProgress, setMoveProgress] = useState<{ moved: number; total: number } | null>(null)
+  const [moveProgress, setMoveProgress] = useState<{ moved: number; failed: number; total: number } | null>(null)
 
   const handleMove = async () => {
     if (!selected || !moveTarget) return
@@ -323,23 +323,30 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
         setConfirmModal(null)
         setMoveLoading(true)
         const estimatedTotal = parseInt(selected.attributes.ApproximateNumberOfMessages || '0', 10)
-        setMoveProgress({ moved: 0, total: estimatedTotal })
+        setMoveProgress({ moved: 0, failed: 0, total: estimatedTotal })
         try {
           let totalMoved = 0
+          let totalFailed = 0
           const maxBatches = 1000
           let batch = 0
           while (batch < maxBatches) {
             batch++
             const r = await api.moveMessages(selected.name, moveTarget, 100)
             totalMoved += r.moved
-            setMoveProgress({ moved: totalMoved, total: estimatedTotal })
+            totalFailed += (r.failed || 0)
+            setMoveProgress({ moved: totalMoved, failed: totalFailed, total: estimatedTotal })
             if (r.moved === 0) break
           }
           setMessages([]); await loadQueues()
+          const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
           if (batch >= maxBatches) {
-            setError(`Move stopped after ${maxBatches} batches — ${totalMoved} moved so far. Run again to continue.`)
+            setError(`Move stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
           } else {
-            showSuccess(`${totalMoved} message(s) moved to "${moveTarget}"`)
+            if (totalFailed > 0) {
+              setError(`${totalMoved} message(s) moved to "${moveTarget}"${failMsg}`)
+            } else {
+              showSuccess(`${totalMoved} message(s) moved to "${moveTarget}"`)
+            }
           }
         } catch (e: any) { setError(e.message) }
         finally { setMoveLoading(false); setMoveProgress(null) }
@@ -581,6 +588,7 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
                   <span className="progress-text">
                     {moveProgress.moved.toLocaleString()} / {moveProgress.total > 0 ? `~${moveProgress.total.toLocaleString()}` : '?'} messages
                     {moveProgress.total > 0 && ` (${Math.min(100, Math.round((moveProgress.moved / moveProgress.total) * 100))}%)`}
+                    {moveProgress.failed > 0 && ` (${moveProgress.failed} failed)`}
                   </span>
                 </div>
               )}
