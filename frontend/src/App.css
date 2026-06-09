@@ -193,6 +193,11 @@ tbody tr:nth-child(even) { background: #fafafa; }
   border-bottom: 2px solid #0066cc;
   font-weight: 600;
 }
+.tab-btn:focus-visible {
+  outline: 2px solid #0066cc;
+  outline-offset: -2px;
+  color: #0066cc;
+}
 
 .tab-content {
   flex: 1;
@@ -235,7 +240,7 @@ tbody tr:nth-child(even) { background: #fafafa; }
   margin: 0;
 }
 .body-pre code {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
   color: #212529;
   white-space: pre-wrap;

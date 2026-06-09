@@ -546,7 +546,12 @@ def lambda_handler(event, context):
                     break
                 for msg in msgs:
                     sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
-                    exported.append({'messageId': msg['MessageId'], 'body': msg['Body'], 'attributes': msg.get('Attributes', {})})
+                    exported.append({
+                        'messageId': msg['MessageId'],
+                        'body': msg['Body'],
+                        'attributes': msg.get('Attributes', {}),
+                        'messageAttributes': msg.get('MessageAttributes', {})
+                    })
             log_audit(event, 'export_messages', queue_name, {
                 'maxMessages': max_msgs,
                 'exportedCount': len(exported)
@@ -560,6 +565,9 @@ def lambda_handler(event, context):
             sent = 0
             for m in msgs:
                 kwargs = {'QueueUrl': queue_url, 'MessageBody': m.get('body', m.get('messageBody', ''))}
+                msg_attrs = m.get('messageAttributes') or m.get('MessageAttributes')
+                if msg_attrs:
+                    kwargs['MessageAttributes'] = msg_attrs
                 if is_fifo:
                     kwargs['MessageGroupId'] = m.get('attributes', {}).get('MessageGroupId', 'import')
                     kwargs['MessageDeduplicationId'] = m.get('messageId', f'import-{sent}') + '-import'

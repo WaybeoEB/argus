@@ -62,7 +62,7 @@ t "FIFO send with group"       "curl -sf -X POST $API/queues/t-fifo.fifo/message
 # Isolated test for message attributes
 curl -sf -X POST $API/queues -H 'Content-Type: application/json' -d '{"name":"t-attrs"}' > /dev/null
 T_ATTRS_URL=$(curl -sf "$API/queues" | python3 -c "import sys,json; print([q['url'] for q in json.load(sys.stdin)['queues'] if q['name']=='t-attrs'][0])")
-if echo "$API" | grep -q "localhost"; then
+if echo "$API" | grep -E -q "localhost|127\.0\.0\.1|::1"; then
   T_ATTRS_URL=$(echo "$T_ATTRS_URL" | sed -E 's/[^/:]+(:[0-9]+)?/localhost:4566/2')
 else
   T_ATTRS_URL=$(echo "$T_ATTRS_URL" | sed -E 's/[^/:]+(:[0-9]+)?/localstack:4566/2')
