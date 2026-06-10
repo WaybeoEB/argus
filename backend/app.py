@@ -614,6 +614,7 @@ def lambda_handler(event, context):
             max_msgs = int(body.get('maxMessages', 100))
             exported = []
             receipts = []
+            seen_ids = set()
             is_fifo = queue_name.endswith('.fifo')
             while len(exported) < max_msgs:
                 batch = sqs.receive_message(
@@ -624,13 +625,20 @@ def lambda_handler(event, context):
                 msgs = batch.get('Messages', [])
                 if not msgs:
                     break
+                
+                new_msgs_in_batch = 0
                 for msg in msgs:
-                    exported.append({
-                        'messageId': msg['MessageId'],
-                        'body': msg['Body'],
-                        'attributes': msg.get('Attributes', {}),
-                        'messageAttributes': msg.get('MessageAttributes', {})
-                    })
+                    msg_id = msg['MessageId']
+                    if msg_id not in seen_ids:
+                        seen_ids.add(msg_id)
+                        exported.append({
+                            'messageId': msg_id,
+                            'body': msg['Body'],
+                            'attributes': msg.get('Attributes', {}),
+                            'messageAttributes': msg.get('MessageAttributes', {})
+                        })
+                        new_msgs_in_batch += 1
+                    
                     if is_fifo:
                         try:
                             sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
@@ -641,6 +649,9 @@ def lambda_handler(event, context):
                             )
                     else:
                         receipts.append(msg['ReceiptHandle'])
+                
+                if new_msgs_in_batch == 0:
+                    break
             
             # Reset visibility for all exported messages so they return to the queue.
             for rh in receipts:
