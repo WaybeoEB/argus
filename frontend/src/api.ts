@@ -35,16 +35,16 @@ export const api = {
     request(`/queues/${name}/messages`, { method: 'DELETE', body: JSON.stringify({ messageId }) }),
   editMessage: (name: string, messageBody: string, messageId: string, opts?: { messageGroupId?: string; messageDeduplicationId?: string }) =>
     request(`/queues/${name}/messages`, { method: 'PUT', body: JSON.stringify({ messageBody, messageId, ...opts }) }),
-  redriveMessages: (name: string, maxMessages = 100) =>
-    request(`/queues/${name}/redrive`, { method: 'POST', body: JSON.stringify({ maxMessages }) }),
+  redriveMessages: (name: string, maxMessages = 100, startTimestamp?: number) =>
+    request(`/queues/${name}/redrive`, { method: 'POST', body: JSON.stringify({ maxMessages, startTimestamp }) }),
   sendBatch: (name: string, messages: any[]) =>
     request(`/queues/${name}/messages/batch`, { method: 'POST', body: JSON.stringify({ messages }) }),
   exportMessages: (name: string, maxMessages = 100) =>
     request(`/queues/${name}/export`, { method: 'POST', body: JSON.stringify({ maxMessages }) }),
   importMessages: (name: string, messages: any[]) =>
     request(`/queues/${name}/import`, { method: 'POST', body: JSON.stringify({ messages }) }),
-  moveMessages: (name: string, targetQueue: string, maxMessages = 100, messageId?: string) =>
-    request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages, messageId }) }),
+  moveMessages: (name: string, targetQueue: string, maxMessages = 100, messageId?: string, startTimestamp?: number) =>
+    request(`/queues/${name}/move`, { method: 'POST', body: JSON.stringify({ targetQueue, maxMessages, messageId, startTimestamp }) }),
   getQueueByName: async (name: string) => {
     const pageSize = 50
     let page = 1

@@ -443,6 +443,15 @@ def lambda_handler(event, context):
         # POST /queues/{queueName}/redrive — move messages from DLQ back to source queue
         if method == 'POST' and sub_path == '/redrive':
             max_msgs = int(body.get('maxMessages', 10))
+            start_timestamp = body.get('startTimestamp')
+            start_ts_ms = None
+            if start_timestamp is not None:
+                if isinstance(start_timestamp, str) and (start_timestamp == '' or not start_timestamp.isdigit()):
+                    return cors_response(400, {'error': 'Invalid startTimestamp: must be a numeric value'})
+                try:
+                    start_ts_ms = int(start_timestamp)
+                except (ValueError, TypeError):
+                    return cors_response(400, {'error': 'Invalid startTimestamp: must be an integer'})
             # Find source queues that use this DLQ
             try:
                 dlq_arn = sqs.get_queue_attributes(QueueUrl=queue_url, AttributeNames=['QueueArn'])['Attributes']['QueueArn']
@@ -481,7 +490,14 @@ def lambda_handler(event, context):
             poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
             seen_ids = set()  # Track processed MessageIds to prevent duplicate delivery
+            skipped_receipts = []
+            receive_calls = 0
+            max_receive_calls = max_msgs * 10 + 100
             while moved < max_msgs:
+                if receive_calls >= max_receive_calls:
+                    logger.warning("Redrive safety cap reached: %d receive calls", max_receive_calls)
+                    break
+                receive_calls += 1
                 batch = sqs.receive_message(
                     QueueUrl=queue_url,
                     MaxNumberOfMessages=min(10, max_msgs - moved),
@@ -499,6 +515,17 @@ def lambda_handler(event, context):
                 empty_receives = 0
                 for msg in msgs:
                     msg_id = msg['MessageId']
+                    
+                    # Filter by startTimestamp if provided
+                    sent_ts = msg.get('Attributes', {}).get('SentTimestamp')
+                    if sent_ts is not None and start_ts_ms is not None:
+                        try:
+                            if int(sent_ts) > start_ts_ms:
+                                skipped_receipts.append(msg['ReceiptHandle'])
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
                     # Skip if already processed (SQS standard queues may redeliver)
                     if msg_id in seen_ids:
                         try:
@@ -541,6 +568,14 @@ def lambda_handler(event, context):
                         # a guaranteed duplicate.
                         logger.error("Redrive: sent to source but failed to delete from DLQ: %s (message %s)", e, msg_id, exc_info=True)
                     moved += 1
+
+            # Reset visibility for all skipped messages so they return to the queue.
+            for rh in skipped_receipts:
+                try:
+                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=rh, VisibilityTimeout=0)
+                except Exception as e:
+                    logger.debug("Redrive: failed to reset visibility for skipped message: %s", e)
+
             log_audit(event, 'redrive_messages', queue_name, {
                 'sourceQueue': source_url.split('/')[-1],
                 'maxMessages': max_msgs,
@@ -578,6 +613,8 @@ def lambda_handler(event, context):
         if method == 'POST' and sub_path == '/export':
             max_msgs = int(body.get('maxMessages', 100))
             exported = []
+            receipts = []
+            is_fifo = queue_name.endswith('.fifo')
             while len(exported) < max_msgs:
                 batch = sqs.receive_message(
                     QueueUrl=queue_url, MaxNumberOfMessages=min(10, max_msgs - len(exported)),
@@ -588,13 +625,30 @@ def lambda_handler(event, context):
                 if not msgs:
                     break
                 for msg in msgs:
-                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
                     exported.append({
                         'messageId': msg['MessageId'],
                         'body': msg['Body'],
                         'attributes': msg.get('Attributes', {}),
                         'messageAttributes': msg.get('MessageAttributes', {})
                     })
+                    if is_fifo:
+                        try:
+                            sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'], VisibilityTimeout=0)
+                        except Exception as e:
+                            logger.error(
+                                "Export: Failed to reset visibility for FIFO message: %s. Queue: %s, MessageId: %s, ReceiptHandle: %s",
+                                e, queue_url, msg.get('MessageId'), msg.get('ReceiptHandle'), exc_info=True
+                            )
+                    else:
+                        receipts.append(msg['ReceiptHandle'])
+            
+            # Reset visibility for all exported messages so they return to the queue.
+            for rh in receipts:
+                try:
+                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=rh, VisibilityTimeout=0)
+                except Exception as e:
+                    logger.debug("Export: failed to reset visibility: %s", e)
+
             log_audit(event, 'export_messages', queue_name, {
                 'maxMessages': max_msgs,
                 'exportedCount': len(exported)
@@ -625,6 +679,15 @@ def lambda_handler(event, context):
         if method == 'POST' and sub_path == '/move':
             target_name = body.get('targetQueue')
             max_msgs = int(body.get('maxMessages', 100))
+            start_timestamp = body.get('startTimestamp')
+            start_ts_ms = None
+            if start_timestamp is not None:
+                if isinstance(start_timestamp, str) and (start_timestamp == '' or not start_timestamp.isdigit()):
+                    return cors_response(400, {'error': 'Invalid startTimestamp: must be a numeric value'})
+                try:
+                    start_ts_ms = int(start_timestamp)
+                except (ValueError, TypeError):
+                    return cors_response(400, {'error': 'Invalid startTimestamp: must be an integer'})
 
             if not target_name:
                 return cors_response(400, {'error': 'targetQueue is required'})
@@ -726,7 +789,14 @@ def lambda_handler(event, context):
             poll_wait = config.sqs_move_poll_wait_seconds
             empty_receives = 0
             seen_ids = set()
+            skipped_receipts = []
+            receive_calls = 0
+            max_receive_calls = max_msgs * 10 + 100
             while moved < max_msgs:
+                if receive_calls >= max_receive_calls:
+                    logger.warning("Move safety cap reached: %d receive calls", max_receive_calls)
+                    break
+                receive_calls += 1
                 batch = sqs.receive_message(
                     QueueUrl=queue_url,
                     MaxNumberOfMessages=min(10, max_msgs - moved),
@@ -744,6 +814,17 @@ def lambda_handler(event, context):
                 empty_receives = 0
                 for msg in msgs:
                     msg_id = msg['MessageId']
+
+                    # Filter by startTimestamp if provided
+                    sent_ts = msg.get('Attributes', {}).get('SentTimestamp')
+                    if sent_ts is not None and start_ts_ms is not None:
+                        try:
+                            if int(sent_ts) > start_ts_ms:
+                                skipped_receipts.append(msg['ReceiptHandle'])
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
                     if msg_id in seen_ids:
                         try:
                             sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=msg['ReceiptHandle'])
@@ -776,6 +857,14 @@ def lambda_handler(event, context):
                     except Exception as e:
                         logger.exception("Move: sent to target but failed to delete from source: message %s", msg_id)
                     moved += 1
+
+            # Reset visibility for all skipped messages so they return to the queue.
+            for rh in skipped_receipts:
+                try:
+                    sqs.change_message_visibility(QueueUrl=queue_url, ReceiptHandle=rh, VisibilityTimeout=0)
+                except Exception as e:
+                    logger.debug("Move: failed to reset visibility for skipped message: %s", e)
+
             log_audit(event, 'move_messages', queue_name, {
                 'targetQueue': target_name,
                 'maxMessages': max_msgs,
