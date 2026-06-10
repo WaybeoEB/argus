@@ -256,9 +256,10 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
             totalFailed += (r.failed || 0)
             if (r.moved === 0) break
           }
+          const cancelled = redriveCancelRef.current
           setMessages([]); await loadQueues()
           const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
-          if (redriveCancelRef.current) {
+          if (cancelled) {
             setError(`Redrive cancelled by user — ${totalMoved} moved so far${failMsg}.`)
           } else if (batch >= maxBatches) {
             setError(`Redrive stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)
@@ -348,9 +349,10 @@ export default function App({ onLogout }: { onLogout?: () => void }) {
             setMoveProgress({ moved: totalMoved, failed: totalFailed, total: estimatedTotal })
             if (r.moved === 0) break
           }
+          const cancelled = moveCancelRef.current
           setMessages([]); await loadQueues()
           const failMsg = totalFailed ? ` (${totalFailed} failed)` : ''
-          if (moveCancelRef.current) {
+          if (cancelled) {
             setError(`Move cancelled by user — ${totalMoved} moved so far${failMsg}.`)
           } else if (batch >= maxBatches) {
             setError(`Move stopped after ${maxBatches} batches — ${totalMoved} moved so far${failMsg}. Run again to continue.`)

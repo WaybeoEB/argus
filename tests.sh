@@ -212,8 +212,8 @@ fi
 if [ "$DEACTIVATE_DELETE_LC" = "true" ]; then
   t "Delete queue blocked"     "curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/queues/t-target | grep -q 403"
 else
-  t "Delete queue"             "curl -sf -X DELETE \$API/queues/t-target | grep -q deleted"
-  t "Deleted not in list"      "curl -sf \$API/queues | python3 -c \"import sys,json;assert 't-target' not in [q['name'] for q in json.load(sys.stdin)['queues']]\""
+  t "Delete queue"             "curl -sf -X DELETE $API/queues/t-target | grep -q deleted"
+  t "Deleted not in list"      "curl -sf $API/queues | python3 -c \"import sys,json;assert 't-target' not in [q['name'] for q in json.load(sys.stdin)['queues']]\""
 fi
 
 echo ""
